@@ -6,13 +6,14 @@ const http = require('node:http');
 const { Client, Collection, GatewayIntentBits } = require('discord.js');
 const config = require('./config');
 
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
-});
+const FULL_INTENTS = [
+  GatewayIntentBits.Guilds,
+  GatewayIntentBits.GuildMessages,
+  GatewayIntentBits.MessageContent,
+];
+const MINIMAL_INTENTS = [GatewayIntentBits.Guilds];
 
-client.commands = new Collection();
-
-function loadCommands() {
+function loadCommands(client) {
   const commandsDir = path.join(__dirname, 'commands');
   const files = fs.readdirSync(commandsDir).filter((file) => file.endsWith('.js'));
 
@@ -27,7 +28,7 @@ function loadCommands() {
   console.log(`Memuat ${client.commands.size} command.`);
 }
 
-function loadEvents() {
+function loadEvents(client) {
   const eventsDir = path.join(__dirname, 'events');
   const files = fs.readdirSync(eventsDir).filter((file) => file.endsWith('.js'));
 
@@ -67,12 +68,40 @@ function startHealthServer() {
   });
 }
 
+async function startClient(intents) {
+  const client = new Client({ intents });
+  client.commands = new Collection();
+  loadCommands(client);
+  loadEvents(client);
+
+  try {
+    await client.login(config.token);
+    return client;
+  } catch (err) {
+    if (/disallowed intents/i.test(err.message)) {
+      console.warn(
+        'Message Content Intent belum aktif di Developer Portal. ' +
+          'Bot jalan TANPA fitur auto-reply. Aktifkan: Portal > Bot > Privileged Gateway Intents > Message Content Intent.'
+      );
+      try {
+        await client.destroy();
+      } catch {
+        /* ignore */
+      }
+      return null;
+    }
+    throw err;
+  }
+}
+
 async function main() {
-  loadCommands();
-  loadEvents();
   startHealthServer();
 
-  await client.login(config.token);
+  const client = (await startClient(FULL_INTENTS)) ?? (await startClient(MINIMAL_INTENTS));
+
+  if (!client) {
+    throw new Error('Gagal login ke Discord.');
+  }
 }
 
 main().catch((err) => {

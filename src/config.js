@@ -10,10 +10,44 @@ function required(name) {
   return value.trim();
 }
 
-const ownerIds = (process.env.OWNER_IDS || '')
-  .split(',')
-  .map((id) => id.trim())
-  .filter(Boolean);
+function parseBool(value, fallback) {
+  if (value === undefined || value.trim() === '') return fallback;
+  return !['false', '0', 'off', 'no'].includes(value.trim().toLowerCase());
+}
+
+function parseList(value) {
+  return (value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseNumber(value, fallback) {
+  const num = Number.parseInt((value || '').trim(), 10);
+  return Number.isFinite(num) && num > 0 ? num : fallback;
+}
+
+/**
+ * Ambil ID channel dari env. Menerima ID angka atau URL channel Discord.
+ * @param {string} envName
+ * @returns {string|null}
+ */
+function parseChannelId(envName) {
+  const raw = (process.env[envName] || '').trim();
+  if (!raw) return null;
+  if (/^\d{17,20}$/.test(raw)) return raw;
+
+  const urlMatch = raw.match(/channels\/\d+\/(\d+)/);
+  if (urlMatch) return urlMatch[1];
+
+  console.warn(
+    `[config] ${envName} harus berupa ID channel (angka) atau URL channel. ` +
+      `Nilai "${raw}" diabaikan -> token akan jadi teks biasa.`
+  );
+  return null;
+}
+
+const ownerIds = parseList(process.env.OWNER_IDS);
 
 if (ownerIds.length === 0) {
   throw new Error('Environment variable "OWNER_IDS" wajib diisi minimal satu User ID.');
@@ -25,6 +59,23 @@ const config = {
   guildId: (process.env.GUILD_ID || '').trim() || null,
   ownerIds,
   embedColor: (process.env.EMBED_COLOR || '#5865F2').trim(),
+
+  autoReply: {
+    enabled: parseBool(process.env.AUTOREPLY_ENABLED, true),
+    channels: parseList(process.env.AUTOREPLY_CHANNELS),
+    cooldownMs: parseNumber(process.env.AUTOREPLY_COOLDOWN_MS, 5000),
+    maxLen: parseNumber(process.env.AUTOREPLY_MAX_LEN, 500),
+    geminiApiKey: (process.env.GEMINI_API_KEY || '').trim() || null,
+    geminiModel: (process.env.GEMINI_MODEL || 'gemini-3.5-flash').trim(),
+    channelGetKey: parseChannelId('CHANNEL_GET_KEY'),
+    channelGetScript: parseChannelId('CHANNEL_GET_SCRIPT'),
+    channelSupportGame: parseChannelId('CHANNEL_SUPPORT_GAME'),
+    channelSupportExecutor: parseChannelId('CHANNEL_SUPPORT_EXECUTOR'),
+  },
 };
+
+if (config.autoReply.enabled && !config.autoReply.geminiApiKey) {
+  console.warn('[config] AUTOREPLY aktif tapi GEMINI_API_KEY kosong. Hanya jawaban canned yang akan bekerja.');
+}
 
 module.exports = config;
