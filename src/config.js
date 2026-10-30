@@ -60,6 +60,11 @@ const config = {
   ownerIds,
   embedColor: (process.env.EMBED_COLOR || '#5865F2').trim(),
 
+  // Folder penyimpanan data runtime (panel live /games). Kosong = ./data
+  dataDir: (process.env.DATA_DIR || 'data').trim() || 'data',
+  // Channel default untuk panel live. CHANNEL_GAMES menang, fallback ke CHANNEL_SUPPORT_GAME.
+  gamesChannelId: parseChannelId('CHANNEL_GAMES') || parseChannelId('CHANNEL_SUPPORT_GAME'),
+
   autoReply: {
     enabled: parseBool(process.env.AUTOREPLY_ENABLED, true),
     channels: parseList(process.env.AUTOREPLY_CHANNELS),

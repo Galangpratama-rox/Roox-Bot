@@ -6,3 +6,7 @@ npm-debug.log*
 *.log
 .DS_Store
 .vscode/
+
+# data runtime panel live /games (jangan di-commit)
+data/state.json
+data/state.json.tmp

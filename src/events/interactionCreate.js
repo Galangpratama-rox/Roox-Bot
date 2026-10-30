@@ -3,6 +3,7 @@
 const { Events, MessageFlags } = require('discord.js');
 const { isOwner } = require('../utils/isOwner');
 const { handleButton, handleModalSubmit } = require('../interactions/embedFlow');
+const gamesFlow = require('../interactions/gamesFlow');
 
 function parseCustomId(customId) {
   const parts = customId.split(':');
@@ -14,6 +15,11 @@ module.exports = {
   name: Events.InteractionCreate,
   async execute(interaction) {
     if (!isOwner(interaction.user.id)) {
+      // Autocomplete tidak bisa dibalas pesan biasa: cukup kosongkan pilihan.
+      if (interaction.isAutocomplete()) {
+        await interaction.respond([]).catch(() => {});
+        return;
+      }
       const payload = {
         content: 'Kamu tidak punya akses untuk memakai bot ini.',
         flags: MessageFlags.Ephemeral,
@@ -28,6 +34,13 @@ module.exports = {
     }
 
     try {
+      if (interaction.isAutocomplete()) {
+        if (interaction.commandName === 'games') {
+          return await gamesFlow.handleGamesAutocomplete(interaction);
+        }
+        return await interaction.respond([]).catch(() => {});
+      }
+
       if (interaction.isChatInputCommand()) {
         const command = interaction.client.commands.get(interaction.commandName);
         if (!command) {
@@ -38,18 +51,25 @@ module.exports = {
       }
 
       if (interaction.isButton()) {
+        if (interaction.customId.startsWith('games:')) {
+          return await gamesFlow.handleGamesButton(interaction);
+        }
         const parsed = parseCustomId(interaction.customId);
         if (!parsed) return;
         return await handleButton(interaction, parsed.pid, parsed.rest.join(':'));
       }
 
       if (interaction.isModalSubmit()) {
+        if (interaction.customId.startsWith('games:')) {
+          return await gamesFlow.handleGamesModal(interaction);
+        }
         const parts = interaction.customId.split(':');
         if (parts[0] !== 'embed' || parts[2] !== 'submit') return;
         return await handleModalSubmit(interaction, parts[1], parts.slice(3).join(':'));
       }
     } catch (err) {
       console.error('Error menangani interaksi:', err);
+      if (interaction.isAutocomplete()) return;
       const content = `Terjadi error: ${err.message}`;
       if (interaction.deferred || interaction.replied) {
         await interaction.editReply({ content }).catch(() => {});

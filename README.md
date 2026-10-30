@@ -7,6 +7,8 @@ yang hanya bisa dipakai oleh owner (berdasarkan User ID).
 
 - Slash command `/embed` (owner-only) yang menampilkan **panel tombol** dengan
   **live preview**.
+- Slash command `/games` (owner-only): **panel live "SORU HUB · Supported Games"**
+  yang dikirim sekali lalu **di-edit otomatis** setiap daftar/status game berubah.
 - Input lewat **pop-up modal** (form): Title, Description, URL, Color, Channel,
   Image (upload/URL), Thumbnail, Author, Footer, Fields, Timestamp.
 - **Tombol link** pada embed: user klik tombol → diarahkan ke URL.
@@ -27,6 +29,66 @@ yang hanya bisa dipakai oleh owner (berdasarkan User ID).
 3. Preview di panel langsung ter-update setiap kali form disimpan.
 4. Klik **Kirim** untuk mengirim embed ke channel tujuan.
 5. Tombol **Reset** mengosongkan isian, **Batal** menutup panel.
+
+## Panel Live `/games` (Supported Games)
+
+Satu embed yang **dikirim sekali** lalu **di-edit bot** setiap ada perubahan, jadi
+tidak ada spam pesan baru. Cocok untuk papan status "game mana yang working".
+
+Tampilan embed:
+
+```
+SORU HUB                        <- author (ikon opsional)
+🎮 Supported Games              <- title
+Game yang didukung SORU HUB     <- description
+🟢 Working · 🟡 Updating · 🔴 Down
+
+**🎮 Games (16)**
+🟢 +1 Mine Per Click
+🟢 Break Egg For Brainrot
+...                             <- thumbnail (kanan atas) + banner GIF (bawah)
+SORU HUB · Supported Games • 24/10/2026 08:08   <- footer + timestamp
+```
+
+- Warna embed otomatis: semua 🟢 → hijau, ada 🟡 → kuning, ada 🔴 → merah.
+- Timestamp = waktu update terakhir.
+- Kalau game terlalu banyak untuk satu embed, daftar otomatis dipindah ke
+  fields dan dipotong dengan catatan `…dan N game lainnya` (batas Discord).
+
+### Command
+
+| Command | Fungsi |
+|---|---|
+| `/games panel [channel]` | Kirim panel pertama, atau pindah/pulihkan panel di channel itu |
+| `/games add name [status]` | Tambah game (default `🟢 Working`) |
+| `/games set name status` | Ubah status game (nama ada autocomplete) |
+| `/games rename name new_name` | Ganti nama game |
+| `/games remove name` | Hapus game |
+| `/games list` | Lihat daftar + jumlah per status (ephemeral) |
+| `/games media` | Atur thumbnail (kanan atas), banner GIF, author name/icon, title |
+| `/games footer` | Atur teks & ikon footer |
+| `/games refresh` | Paksa render + edit panel sekarang |
+| `/games link message` | Adopsi pesan panel yang sudah ada (link pesan / `channelId/messageId`) |
+| `/games sync` | Reset daftar game ke isi `src/data/games.js` (dengan konfirmasi) |
+| `/games info` | Channel, pesan, total game, waktu update, lokasi state file |
+
+### Penyimpanan & pemulihan
+
+- Data runtime ada di `data/state.json` (bisa dipindah lewat env `DATA_DIR`):
+  posisi pesan panel, daftar game, dan pengaturan media.
+- Ditulis **atomic** dan digabung, jadi aman walau banyak update beruntun.
+- **Restart** → bot membaca state dan meng-edit pesan yang sama (tidak kirim baru).
+- **State hilang (redeploy)** → bot mencari **pesan pinned** miliknya di channel
+  dan mengadopsinya, jadi panel tetap satu. Daftar game kembali ke seed
+  `src/data/games.js` saat itu; jalankan `/games panel` / `/games sync` bila perlu.
+- **Pesan panel dihapus manual** → update berikutnya mengirim panel baru di
+  channel yang sama, mem-pin-nya, lalu menyimpan id barunya.
+- Butuh izin bot: **View Channel, Send Messages, Embed Links** dan
+  **Read Message History** (untuk adopsi pinned). `Manage Messages` diperlukan
+  agar panel bisa di-pin otomatis.
+- **Railway:** disk container bisa hilang saat redeploy. Kalau tidak mau mount
+  volume, cukup pastikan panel tetap di-pin agar bisa diadopsi ulang. Kalau mau
+  data benar-benar permanen, mount volume lalu set `DATA_DIR=/data`.
 
 ## Persyaratan
 
@@ -65,6 +127,8 @@ yang hanya bisa dipakai oleh owner (berdasarkan User ID).
    | `CHANNEL_GET_SCRIPT` | Tidak | ID channel #get-script (untuk token `{get-script}`) |
    | `CHANNEL_SUPPORT_GAME` | Tidak | ID channel support-game (token `{support-game}`) |
    | `CHANNEL_SUPPORT_EXECUTOR` | Tidak | ID channel support-executor (token `{support-executor}`) |
+   | `CHANNEL_GAMES` | Tidak | Channel default panel live `/games` (kosong = `CHANNEL_SUPPORT_GAME`) |
+   | `DATA_DIR` | Tidak | Folder state panel live. Default `data`; di Railway isi path volume |
 
    \* Wajib bila auto-reply AI dipakai; tanpa itu hanya jawaban canned yang jalan.
 
@@ -181,23 +245,29 @@ src/
 ├─ config.js             # baca & validasi env
 ├─ deploy-commands.js    # registrasi slash command
 ├─ events/
-│  ├─ ready.js
-│  ├─ interactionCreate.js   # routing slash/button/modal + owner gate
+│  ├─ ready.js               # + bootstrap panel live /games
+│  ├─ interactionCreate.js   # routing slash/button/modal/autocomplete + owner gate
 │  └─ messageCreate.js       # auto-reply chat
 ├─ commands/
-│  └─ embed.js           # tampilkan panel embed
+│  ├─ embed.js           # tampilkan panel embed
+│  └─ games.js           # /games: panel live supported games
 ├─ interactions/
-│  └─ embedFlow.js       # handle tombol, submit modal, kirim
+│  ├─ embedFlow.js       # handle tombol, submit modal, kirim
+│  └─ gamesFlow.js       # modal media/footer, tombol sync, autocomplete
 ├─ services/
 │  ├─ gemini.js          # wrapper REST Gemini
-│  └─ autoreply.js       # orkestrasi auto-reply
+│  ├─ autoreply.js       # orkestrasi auto-reply
+│  ├─ gameStore.js       # state panel live + persist ke data/state.json
+│  └─ panelUpdater.js    # edit pesan panel, adopsi pinned, recovery
 ├─ data/
-│  └─ faq.js             # knowledge base (ISI SENDIRI)
+│  ├─ faq.js             # knowledge base (ISI SENDIRI)
+│  └─ games.js           # seed daftar game + media panel (ISI SENDIRI)
 ├─ ui/
 │  └─ embedPanel.js      # rakit preview + tombol + modal
 └─ utils/
    ├─ isOwner.js
    ├─ embedState.js      # state panel sementara
    ├─ cooldown.js        # anti-spam auto-reply
-   └─ buildEmbed.js      # rakit embed dari state
+   ├─ buildEmbed.js      # rakit embed dari state
+   └─ buildGamesEmbed.js # rakit embed panel /games + guard limit Discord
 ```
