@@ -39,7 +39,7 @@ const STATUS_OPTION = (option, required = true) =>
 
 const data = new SlashCommandBuilder()
   .setName('games')
-  .setDescription('Kelola panel live "SORU HUB · Supported Games" (owner-only)')
+  .setDescription('Kelola panel live "Roox Hub · Supported Games" (owner-only)')
   .setContexts(InteractionContextType.Guild)
   .addSubcommand((sub) =>
     sub
@@ -337,7 +337,7 @@ async function handleInfo(interaction) {
     : '_belum ada_';
 
   const lines = [
-    `**Panel live SORU HUB**`,
+    `**Panel live Roox Hub**`,
     `Channel: ${panel.channelId ? `<#${panel.channelId}>` : '_belum diset_'}`,
     `Pesan: ${messageRef}`,
     `Total game: **${games.length}** (${countsLine()})`,

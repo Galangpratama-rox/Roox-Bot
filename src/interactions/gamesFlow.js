@@ -89,7 +89,7 @@ function openFooterModal(interaction) {
   modal.addLabelComponents(
     new LabelBuilder()
       .setLabel('Footer Text')
-      .setDescription('Contoh: SORU HUB · Supported Games')
+      .setDescription('Contoh: Roox Hub · Supported Games')
       .setTextInputComponent(textInput('footer_prefix', media.footerPrefix, { maxLength: 200 })),
     new LabelBuilder()
       .setLabel('Footer Icon URL')

@@ -1,7 +1,7 @@
 'use strict';
 
 // ============================================================================
-// SEED PANEL LIVE "SORU HUB · Supported Games"
+// SEED PANEL LIVE "Roox Hub · Supported Games"
 //
 // File ini hanya nilai AWAL / default. Setelah bot jalan, daftar game, status,
 // dan media disimpan di data/state.json (runtime) dan diubah lewat `/games`.
@@ -29,36 +29,30 @@ module.exports = {
 
   // Teks & gambar panel. Semua bisa diubah lewat `/games media` dan `/games footer`.
   media: {
-    authorName: 'SORU HUB',
+    authorName: 'Roox Hub',
     authorIcon: null,
     title: '🎮 Supported Games',
-    subtitle: 'Game yang didukung SORU HUB',
+    subtitle: 'Game yang didukung Roox Hub',
     listTitle: '🎮 Games',
     // Gambar kecil di kanan atas (logo).
     thumbnail: null,
     // Banner besar di bawah (boleh GIF animasi).
     banner: null,
-    footerPrefix: 'SORU HUB · Supported Games',
+    footerPrefix: 'Roox Hub · Supported Games',
     footerIcon: null,
   },
 
   // Daftar game awal. Boleh string saja, atau { name, status }.
   games: [
-    '+1 Mine Per Click',
-    'Break Egg For Brainrot',
+    'Ride a Pet',
+    'Anime Dice',
+    'Break and Steal an egg',
+    'Fish Raider',
+    'Climb For Animal',
     'Tap Simulator Reborn',
-    'Clone For Steal Egg',
-    '+1 Throw Stone',
-    'Climb For Animal Egg',
-    'Break And Steal A Egg',
-    'Volleyball Legends',
-    'Prospecting',
-    'Rodeo For Animal',
-    '+1 Swing For Egg',
-    'Chop Tree For Treasure',
-    'Fish Riders',
     'Bike For Egg',
-    '+1 Money Per Click',
-    'Train Pets For Egg',
+    'STEAL A PET AND RIDE IT!',
+    'Throw Food For Animal',
+    'Anime Card Farm',
   ],
 };

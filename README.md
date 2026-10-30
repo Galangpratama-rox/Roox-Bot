@@ -7,7 +7,7 @@ yang hanya bisa dipakai oleh owner (berdasarkan User ID).
 
 - Slash command `/embed` (owner-only) yang menampilkan **panel tombol** dengan
   **live preview**.
-- Slash command `/games` (owner-only): **panel live "SORU HUB · Supported Games"**
+- Slash command `/games` (owner-only): **panel live "Roox Hub · Supported Games"**
   yang dikirim sekali lalu **di-edit otomatis** setiap daftar/status game berubah.
 - Input lewat **pop-up modal** (form): Title, Description, URL, Color, Channel,
   Image (upload/URL), Thumbnail, Author, Footer, Fields, Timestamp.
@@ -38,16 +38,16 @@ tidak ada spam pesan baru. Cocok untuk papan status "game mana yang working".
 Tampilan embed:
 
 ```
-SORU HUB                        <- author (ikon opsional)
+Roox Hub                        <- author (ikon opsional)
 🎮 Supported Games              <- title
-Game yang didukung SORU HUB     <- description
+Game yang didukung Roox Hub     <- description
 🟢 Working · 🟡 Updating · 🔴 Down
 
-**🎮 Games (16)**
-🟢 +1 Mine Per Click
-🟢 Break Egg For Brainrot
+**🎮 Games (10)**
+🟢 Ride a Pet
+🟢 Anime Dice
 ...                             <- thumbnail (kanan atas) + banner GIF (bawah)
-SORU HUB · Supported Games • 24/10/2026 08:08   <- footer + timestamp
+Roox Hub · Supported Games • 24/10/2026 08:08   <- footer + timestamp
 ```
 
 - Warna embed otomatis: semua 🟢 → hijau, ada 🟡 → kuning, ada 🔴 → merah.
