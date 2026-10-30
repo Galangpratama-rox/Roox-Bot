@@ -50,7 +50,9 @@ Game yang didukung Roox Hub     <- description
 Roox Hub · Supported Games • 24/10/2026 08:08   <- footer + timestamp
 ```
 
-- Warna embed otomatis: semua 🟢 → hijau, ada 🟡 → kuning, ada 🔴 → merah.
+- Garis tepi embed **merah gelap** (`#8B0000`). Ubah di `src/data/games.js` (`color`).
+- Gambar diunggah **langsung lewat modal** (bukan paste URL) dan disimpan di
+  `data/assets`. GIF animasi didukung untuk banner maupun thumbnail.
 - Timestamp = waktu update terakhir.
 - Kalau game terlalu banyak untuk satu embed, daftar otomatis dipindah ke
   fields dan dipotong dengan catatan `…dan N game lainnya` (batas Discord).
@@ -65,8 +67,8 @@ Roox Hub · Supported Games • 24/10/2026 08:08   <- footer + timestamp
 | `/games rename name new_name` | Ganti nama game |
 | `/games remove name` | Hapus game |
 | `/games list` | Lihat daftar + jumlah per status (ephemeral) |
-| `/games media` | Atur thumbnail (kanan atas), banner GIF, author name/icon, title |
-| `/games footer` | Atur teks & ikon footer |
+| `/games media` | Upload thumbnail (kanan atas), banner GIF, author icon + atur author name & title |
+| `/games footer` | Upload ikon footer + atur teks footer |
 | `/games refresh` | Paksa render + edit panel sekarang |
 | `/games link message` | Adopsi pesan panel yang sudah ada (link pesan / `channelId/messageId`) |
 | `/games sync` | Reset daftar game ke isi `src/data/games.js` (dengan konfirmasi) |
@@ -76,8 +78,17 @@ Roox Hub · Supported Games • 24/10/2026 08:08   <- footer + timestamp
 
 - Data runtime ada di `data/state.json` (bisa dipindah lewat env `DATA_DIR`):
   posisi pesan panel, daftar game, dan pengaturan media.
+- Gambar hasil upload disimpan di `data/assets`. Gambar yang diunggah **sekali**
+  akan menempel di pesan panel, jadi update-nya tidak mengunggah ulang file
+  (hemat bandwidth dan tidak kena URL kedaluwarsa).
+- Nama file gambar diberi tag jenis (`banner-…`, `thumbnail-…`, `authoricon-…`,
+  `footericon-…`), sehingga kalau `state.json` hilang, panel bisa memulihkan
+  gambarnya otomatis dari lampiran yang masih menempel di pesan.
 - Ditulis **atomic** dan digabung, jadi aman walau banyak update beruntun.
 - **Restart** → bot membaca state dan meng-edit pesan yang sama (tidak kirim baru).
+- **Gambar hilang dari disk (redeploy tanpa volume)** → panel tetap tampil normal
+  karena gambarnya masih menempel di pesan. Kalau pesan panel sampai hilang juga,
+  upload ulang gambarnya lewat `/games media`.
 - **State hilang (redeploy)** → bot mencari **pesan pinned** miliknya di channel
   dan mengadopsinya, jadi panel tetap satu. Daftar game kembali ke seed
   `src/data/games.js` saat itu; jalankan `/games panel` / `/games sync` bila perlu.
@@ -258,6 +269,7 @@ src/
 │  ├─ gemini.js          # wrapper REST Gemini
 │  ├─ autoreply.js       # orkestrasi auto-reply
 │  ├─ gameStore.js       # state panel live + persist ke data/state.json
+│  ├─ assetStore.js      # simpan/ambil gambar upload panel (data/assets)
 │  └─ panelUpdater.js    # edit pesan panel, adopsi pinned, recovery
 ├─ data/
 │  ├─ faq.js             # knowledge base (ISI SENDIRI)

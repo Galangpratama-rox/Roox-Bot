@@ -4,6 +4,7 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  FileUploadBuilder,
   LabelBuilder,
   MessageFlags,
   ModalBuilder,
@@ -13,6 +14,7 @@ const {
 
 const seed = require('../data/games');
 const store = require('../services/gameStore');
+const assets = require('../services/assetStore');
 const { renderAndUpdate } = require('../services/panelUpdater');
 
 function textInput(customId, value, { paragraph = false, maxLength = 400 } = {}) {
@@ -25,18 +27,17 @@ function textInput(customId, value, { paragraph = false, maxLength = 400 } = {})
   return input;
 }
 
+function fileInput(customId) {
+  return new FileUploadBuilder()
+    .setCustomId(customId)
+    .setMinValues(0)
+    .setMaxValues(1)
+    .setRequired(false);
+}
+
 function clean(value) {
   const trimmed = String(value ?? '').trim();
   return trimmed.length ? trimmed : null;
-}
-
-function cleanUrl(value, label) {
-  const raw = clean(value);
-  if (!raw) return null;
-  if (!/^https?:\/\/\S+$/i.test(raw)) {
-    throw new Error(`${label} harus berupa URL yang diawali http:// atau https://`);
-  }
-  return raw.slice(0, 400);
 }
 
 async function replyEphemeral(interaction, content) {
@@ -45,6 +46,60 @@ async function replyEphemeral(interaction, content) {
     return interaction.editReply({ content, allowedMentions: { parse: [] } }).catch(() => {});
   }
   return interaction.reply(payload).catch(() => {});
+}
+
+/**
+ * Simpan file yang diunggah lewat modal ke folder data/assets.
+ * @param {string} tag jenis gambar (thumbnail/banner/authoricon/footericon)
+ * @returns {Promise<string|undefined>} nama file, atau undefined kalau tidak ada upload
+ */
+async function pickUpload(fields, customId, tag) {
+  const uploaded = fields.getUploadedFiles(customId);
+  if (!uploaded || uploaded.size === 0) return undefined;
+
+  const attachment = [...uploaded.values()][0];
+  if (!assets.isAllowedFile(attachment.name)) {
+    throw new Error(
+      `File "${attachment.name}" tidak didukung. Pakai PNG, JPG, WEBP, atau GIF.`
+    );
+  }
+
+  const buffer = await assets.download(attachment.url);
+  return assets.saveUpload(buffer, attachment.name, tag);
+}
+
+/**
+ * Salin gambar yang sudah menempel di pesan panel ke disk. Perlu dilakukan
+ * sebelum mengganti media, karena lampiran pesan akan diganti dengan set baru.
+ */
+async function cacheMessageAssets(interaction, media) {
+  const panel = store.getPanel();
+  if (!panel?.channelId || !panel?.messageId) return;
+
+  const channel = await interaction.client.channels.fetch(panel.channelId).catch(() => null);
+  if (!channel?.messages) return;
+
+  const message = await channel.messages.fetch(panel.messageId).catch(() => null);
+  if (!message) return;
+
+  const byName = new Map([...message.attachments.values()].map((att) => [att.name, att]));
+  for (const kind of seed.imageKinds) {
+    const fileName = media[`${kind}File`];
+    if (!fileName || assets.exists(fileName)) continue;
+
+    const attachment = byName.get(fileName);
+    if (!attachment) continue;
+
+    try {
+      assets.write(fileName, await assets.download(attachment.url));
+    } catch (err) {
+      console.warn(`[games] gagal menyalin aset ${fileName}: ${err.message}`);
+    }
+  }
+}
+
+function referencedFiles(media) {
+  return seed.imageKinds.map((kind) => media[`${kind}File`]).filter(Boolean);
 }
 
 // ---------------------------------------------------------------------------
@@ -57,21 +112,21 @@ function openMediaModal(interaction) {
   const modal = new ModalBuilder().setCustomId('games:media:submit').setTitle('Media & Judul Panel');
   modal.addLabelComponents(
     new LabelBuilder()
-      .setLabel('Thumbnail URL')
-      .setDescription('Gambar kecil di kanan atas')
-      .setTextInputComponent(textInput('thumbnail', media.thumbnail)),
+      .setLabel('Thumbnail')
+      .setDescription('Gambar kecil di kanan atas — upload PNG/JPG/GIF')
+      .setFileUploadComponent(fileInput('thumbnail')),
     new LabelBuilder()
-      .setLabel('Banner URL (GIF)')
-      .setDescription('Gambar besar di bawah, boleh .gif animasi')
-      .setTextInputComponent(textInput('banner', media.banner)),
+      .setLabel('Banner')
+      .setDescription('Gambar besar di bawah — boleh GIF animasi')
+      .setFileUploadComponent(fileInput('banner')),
     new LabelBuilder()
       .setLabel('Author Name')
       .setDescription('Teks kecil di atas judul')
       .setTextInputComponent(textInput('author_name', media.authorName, { maxLength: 100 })),
     new LabelBuilder()
-      .setLabel('Author Icon URL')
+      .setLabel('Author Icon')
       .setDescription('Ikon di samping author name')
-      .setTextInputComponent(textInput('author_icon', media.authorIcon)),
+      .setFileUploadComponent(fileInput('author_icon')),
     new LabelBuilder()
       .setLabel('Title')
       .setDescription('Judul besar embed')
@@ -92,8 +147,9 @@ function openFooterModal(interaction) {
       .setDescription('Contoh: Roox Hub · Supported Games')
       .setTextInputComponent(textInput('footer_prefix', media.footerPrefix, { maxLength: 200 })),
     new LabelBuilder()
-      .setLabel('Footer Icon URL')
-      .setTextInputComponent(textInput('footer_icon', media.footerIcon))
+      .setLabel('Footer Icon')
+      .setDescription('Ikon kecil di footer — upload PNG/JPG/GIF')
+      .setFileUploadComponent(fileInput('footer_icon'))
   );
 
   return interaction.showModal(modal);
@@ -113,16 +169,16 @@ async function handleGamesModal(interaction) {
   try {
     if (scope === 'media') {
       patch = {
-        thumbnail: cleanUrl(fields.getTextInputValue('thumbnail'), 'Thumbnail URL'),
-        banner: cleanUrl(fields.getTextInputValue('banner'), 'Banner URL'),
+        thumbnailFile: await pickUpload(fields, 'thumbnail', 'thumbnail'),
+        bannerFile: await pickUpload(fields, 'banner', 'banner'),
         authorName: clean(fields.getTextInputValue('author_name')),
-        authorIcon: cleanUrl(fields.getTextInputValue('author_icon'), 'Author Icon URL'),
+        authorIconFile: await pickUpload(fields, 'author_icon', 'authoricon'),
         title: clean(fields.getTextInputValue('title')),
       };
     } else if (scope === 'footer') {
       patch = {
         footerPrefix: clean(fields.getTextInputValue('footer_prefix')),
-        footerIcon: cleanUrl(fields.getTextInputValue('footer_icon'), 'Footer Icon URL'),
+        footerIconFile: await pickUpload(fields, 'footer_icon', 'footericon'),
       };
     } else {
       return interaction.editReply({ content: 'Jenis modal tidak dikenal.' });
@@ -131,7 +187,19 @@ async function handleGamesModal(interaction) {
     return interaction.editReply({ content: `❌ ${err.message}` });
   }
 
-  store.setMedia(patch);
+  // Buang nilai undefined: hanya field yang benar-benar diisi yang berubah.
+  for (const key of Object.keys(patch)) {
+    if (patch[key] === undefined) delete patch[key];
+  }
+
+  const uploaded = Object.keys(patch).length > 0;
+  if (!uploaded) {
+    return interaction.editReply({ content: 'ℹ️ Tidak ada perubahan yang dikirim.' });
+  }
+
+  await cacheMessageAssets(interaction, store.getMedia());
+  const media = store.setMedia(patch);
+  assets.prune(referencedFiles(media));
 
   const result = await renderAndUpdate(interaction.client, { force: true });
   const head = scope === 'media' ? '✅ Media & judul panel disimpan.' : '✅ Footer panel disimpan.';

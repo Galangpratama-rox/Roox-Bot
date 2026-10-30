@@ -19,28 +19,27 @@ module.exports = {
   statuses,
   defaultStatus: 'working',
 
-  // Warna embed otomatis mengikuti status terburuk.
-  colors: {
-    working: 0x57f287, // hijau
-    updating: 0xfee75c, // kuning
-    down: 0xed4245, // merah
-    empty: 0x5865f2, // biru (belum ada game)
-  },
+  // Warna garis di tepi kiri embed (hex). Ganti di sini kalau mau warna lain.
+  color: '#8B0000', // merah gelap
 
-  // Teks & gambar panel. Semua bisa diubah lewat `/games media` dan `/games footer`.
+  // Teks & gambar panel. Gambar diunggah lewat `/games media` dan `/games footer`,
+  // lalu disimpan di folder data/assets.
   media: {
     authorName: 'Roox Hub',
-    authorIcon: null,
+    authorIconFile: null,
     title: '🎮 Supported Games',
     subtitle: 'Game yang didukung Roox Hub',
     listTitle: '🎮 Games',
     // Gambar kecil di kanan atas (logo).
-    thumbnail: null,
+    thumbnailFile: null,
     // Banner besar di bawah (boleh GIF animasi).
-    banner: null,
+    bannerFile: null,
     footerPrefix: 'Roox Hub · Supported Games',
-    footerIcon: null,
+    footerIconFile: null,
   },
+
+  // Urutan pengecekan aset gambar panel.
+  imageKinds: ['thumbnail', 'banner', 'authorIcon', 'footerIcon'],
 
   // Daftar game awal. Boleh string saja, atau { name, status }.
   games: [

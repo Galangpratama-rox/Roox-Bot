@@ -10,6 +10,7 @@ const DESC_BUDGET = 3900;
 const FIELD_VALUE_LIMIT = 1024;
 const MAX_FIELDS = 25;
 const EMBED_CHAR_LIMIT = 6000;
+const FALLBACK_COLOR = 0x8b0000;
 
 /** Hindari nama game yang mengandung markdown merusak layout. */
 function escapeMd(text) {
@@ -26,12 +27,25 @@ function legendLine() {
     .join(' · ');
 }
 
-/** Status terburuk menentukan warna embed. */
-function worstStatus(games) {
-  if (!games.length) return null;
-  if (games.some((game) => game.status === 'down')) return 'down';
-  if (games.some((game) => game.status === 'updating')) return 'updating';
-  return 'working';
+/** '#RRGGBB' -> integer warna. */
+function parseColor(value) {
+  const clean = String(value || '')
+    .trim()
+    .replace(/^#/, '');
+  return /^[0-9a-fA-F]{6}$/.test(clean) ? parseInt(clean, 16) : null;
+}
+
+/**
+ * Resolver default: aset yang diunggah dipakai lewat `attachment://`, atau
+ * jatuh ke URL lama kalau state masih menyimpan link.
+ * @param {object} media
+ */
+function defaultResolveImage(media) {
+  return (kind) => {
+    const file = media[`${kind}File`];
+    if (file) return `attachment://${file}`;
+    return media[kind] || null;
+  };
 }
 
 /**
@@ -87,28 +101,42 @@ function takeWithinBudget(chunks, listTitle, charBudget) {
 }
 
 /**
- * Rakit embed panel dari state. Timestamp selalu baru, jadi hash dihitung
- * tanpa timestamp agar panelUpdater tahu kapan isinya benar-benar berubah.
+ * Hash isi panel tanpa timestamp & tanpa URL aset (yang bisa berubah),
+ * supaya pesan tidak di-edit kalau isinya sama.
  * @param {object} state
- * @param {{ timestamp?: boolean, now?: Date }} [options]
+ */
+function hashState(state) {
+  const payload = {
+    media: state.media || {},
+    games: (state.games || []).map((game) => [game.name, game.status]),
+  };
+  return crypto.createHash('sha1').update(JSON.stringify(payload)).digest('hex');
+}
+
+/**
+ * Rakit embed panel dari state.
+ * @param {object} state
+ * @param {{ timestamp?: boolean, now?: Date, resolveImage?: (kind: string) => string|null }} [options]
  * @returns {{ embed: EmbedBuilder, hash: string }}
  */
 function buildGamesEmbed(state, options = {}) {
   const media = { ...seed.media, ...(state.media || {}) };
   const games = state.games || [];
+  const resolveImage = options.resolveImage || defaultResolveImage(media);
 
   const embed = new EmbedBuilder();
-  const worst = worstStatus(games);
-  embed.setColor(worst ? seed.colors[worst] : seed.colors.empty);
+  embed.setColor(parseColor(seed.color) ?? FALLBACK_COLOR);
 
-  if (media.authorName) {
-    embed.setAuthor({ name: media.authorName, iconURL: media.authorIcon || undefined });
+  const authorIcon = resolveImage('authorIcon');
+  if (media.authorName || authorIcon) {
+    embed.setAuthor({ name: media.authorName || seed.media.authorName, iconURL: authorIcon || undefined });
   }
   if (media.title) embed.setTitle(media.title);
 
+  const footerIcon = resolveImage('footerIcon');
   const footerText = media.footerPrefix || media.authorName || seed.media.footerPrefix;
-  if (footerText) {
-    embed.setFooter({ text: footerText, iconURL: media.footerIcon || undefined });
+  if (footerText || footerIcon) {
+    embed.setFooter({ text: footerText || seed.media.footerPrefix, iconURL: footerIcon || undefined });
   }
 
   // Sisa jatah karakter setelah title/author/footer dipakai.
@@ -152,23 +180,16 @@ function buildGamesEmbed(state, options = {}) {
     }
   }
 
-  if (media.thumbnail) embed.setThumbnail(media.thumbnail);
-  if (media.banner) embed.setImage(media.banner);
+  const thumbnail = resolveImage('thumbnail');
+  if (thumbnail) embed.setThumbnail(thumbnail);
 
-  const hash = hashEmbed(embed);
+  const banner = resolveImage('banner');
+  if (banner) embed.setImage(banner);
+
+  const hash = hashState(state);
   if (options.timestamp !== false) embed.setTimestamp(options.now || new Date());
 
   return { embed, hash };
 }
 
-/**
- * Hash isi embed tanpa timestamp, supaya panel tidak di-edit hanya karena jam.
- * @param {EmbedBuilder} embed
- */
-function hashEmbed(embed) {
-  const data = { ...embed.toJSON() };
-  delete data.timestamp;
-  return crypto.createHash('sha1').update(JSON.stringify(data)).digest('hex');
-}
-
-module.exports = { buildGamesEmbed, legendLine, worstStatus };
+module.exports = { buildGamesEmbed, hashState, legendLine, parseColor, FALLBACK_COLOR };

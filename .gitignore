@@ -10,3 +10,4 @@ npm-debug.log*
 # data runtime panel live /games (jangan di-commit)
 data/state.json
 data/state.json.tmp
+data/assets/

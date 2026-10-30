@@ -53,7 +53,7 @@ function buildSeedGames() {
 function freshState() {
   return {
     version: STATE_VERSION,
-    panel: { guildId: null, channelId: null, messageId: null, updatedAt: null },
+    panel: { guildId: null, channelId: null, messageId: null, updatedAt: null, attachments: [] },
     media: defaultMedia(),
     games: buildSeedGames(),
   };
@@ -87,6 +87,9 @@ function sanitize(raw) {
       channelId: rawPanel.channelId ? String(rawPanel.channelId) : null,
       messageId: rawPanel.messageId ? String(rawPanel.messageId) : null,
       updatedAt: Number.isFinite(rawPanel.updatedAt) ? rawPanel.updatedAt : null,
+      attachments: Array.isArray(rawPanel.attachments)
+        ? rawPanel.attachments.filter((name) => typeof name === 'string' && name.trim()).map((name) => name.trim())
+        : [],
     },
     media: { ...defaultMedia(), ...pickMedia(raw.media) },
     games: rawGames
@@ -328,7 +331,7 @@ function setMedia(patch) {
 
 /**
  * Simpan posisi pesan panel. `updatedAt` diisi bila ts diberikan.
- * @param {{ guildId?: string|null, channelId?: string|null, messageId?: string|null }} patch
+ * @param {{ guildId?: string|null, channelId?: string|null, messageId?: string|null, attachments?: string[] }} patch
  * @param {number|null} [ts]
  */
 function updatePanel(patch = {}, ts = Date.now()) {
@@ -336,6 +339,9 @@ function updatePanel(patch = {}, ts = Date.now()) {
   if ('guildId' in patch) panel.guildId = patch.guildId ?? null;
   if ('channelId' in patch) panel.channelId = patch.channelId ?? null;
   if ('messageId' in patch) panel.messageId = patch.messageId ?? null;
+  if ('attachments' in patch) {
+    panel.attachments = Array.isArray(patch.attachments) ? patch.attachments.filter(Boolean) : [];
+  }
   if (ts) panel.updatedAt = ts;
   save();
   return panel;

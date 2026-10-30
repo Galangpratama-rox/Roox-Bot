@@ -1,9 +1,11 @@
 'use strict';
 
-const { PermissionFlagsBits } = require('discord.js');
+const { AttachmentBuilder, PermissionFlagsBits } = require('discord.js');
 
 const config = require('../config');
+const seed = require('../data/games');
 const store = require('./gameStore');
+const assets = require('./assetStore');
 const { buildGamesEmbed } = require('../utils/buildGamesEmbed');
 
 // Jeda minimal antar edit: cegah spam edit kalau owner menjalankan banyak command cepat.
@@ -55,6 +57,86 @@ function isPanelMessage(message, client, media = store.getMedia()) {
   return Boolean(authorName && author === authorName);
 }
 
+/**
+ * Nama lampiran yang dianggap sudah menempel di pesan panel: gabungan catatan
+ * state (pasti) dan lampiran yang dilaporkan pesan (kalau tersedia).
+ * @param {object} panel
+ * @param {import('discord.js').Message|null} existing
+ */
+function knownAttachmentNames(panel, existing) {
+  const names = new Set(Array.isArray(panel?.attachments) ? panel.attachments : []);
+  for (const attachment of existing?.attachments?.values?.() ?? []) {
+    names.add(attachment.name);
+  }
+  return names;
+}
+
+// Nama file aset diberi tag jenis, jadi jenisnya bisa dikenali dari lampiran pesan.
+const TAG_TO_MEDIA_KEY = {
+  thumbnail: 'thumbnailFile',
+  banner: 'bannerFile',
+  authoricon: 'authorIconFile',
+  footericon: 'footerIconFile',
+};
+
+/**
+ * Pulihkan data media dari nama lampiran pesan panel. Berguna saat state.json
+ * hilang (redeploy) padahal gambarnya masih menempel di pesan.
+ * @param {import('discord.js').Message|null} existing
+ */
+function recoverMediaFromMessage(existing) {
+  const patch = {};
+  for (const attachment of existing?.attachments?.values?.() ?? []) {
+    const match = /^(thumbnail|banner|authoricon|footericon)-/i.exec(attachment.name || '');
+    if (!match) continue;
+    patch[TAG_TO_MEDIA_KEY[match[1].toLowerCase()]] = attachment.name;
+  }
+  return patch;
+}
+
+/**
+ * Susun gambar yang perlu diunggah.
+ *
+ * - Mode GANTI: semua gambar yang dipakai ada di disk -> lampiran pesan diganti
+ *   utuh (`attachments: []`) dengan seluruh gambar, jadi tidak ada yang hilang.
+ * - Mode TAMBAH: ada gambar yang hanya menempel di pesan dan tidak ada di disk
+ *   (mis. setelah redeploy) -> jangan ganti lampiran, cukup tambahkan yang baru,
+ *   supaya gambar lama tidak ikut terhapus.
+ * @param {string[]} referenced nama file yang dipakai media
+ * @param {Set<string>} known nama yang sudah menempel di pesan
+ */
+function planAssets(referenced, known) {
+  const onDisk = new Set(referenced.filter((fileName) => assets.exists(fileName)));
+  const awaitingUpload = referenced.filter(
+    (fileName) => !known.has(fileName) || !onDisk.has(fileName)
+  );
+  const replaceMode = awaitingUpload.length > 0 && referenced.every((fileName) => onDisk.has(fileName));
+
+  const files = [];
+  if (awaitingUpload.length) {
+    const list = replaceMode
+      ? referenced
+      : referenced.filter((fileName) => !known.has(fileName) && onDisk.has(fileName));
+
+    for (const fileName of list) {
+      const buffer = assets.read(fileName);
+      if (buffer) files.push(new AttachmentBuilder(buffer, { name: fileName }));
+    }
+  }
+
+  const unavailable = referenced.filter(
+    (fileName) => !known.has(fileName) && !onDisk.has(fileName)
+  );
+  if (unavailable.length) {
+    console.warn(
+      `[games] gambar tidak tersedia di pesan maupun di ${assets.assetDir()} ` +
+        `(${unavailable.join(', ')}). Upload ulang lewat \`/games media\` / \`/games footer\`.`
+    );
+  }
+
+  return { files, replace: replaceMode && files.length > 0, unavailable };
+}
+
 async function updateOnce(client, options) {
   const state = store.getState();
   const panel = state.panel;
@@ -63,46 +145,93 @@ async function updateOnce(client, options) {
     return { ok: false, reason: 'panel belum diset. Jalankan `/games panel` dulu.' };
   }
 
-  const { embed, hash } = buildGamesEmbed(state);
-
-  if (!options.force && panel.messageId && store.getLastHash() === hash) {
-    return { ok: true, skipped: true, messageId: panel.messageId, channelId: panel.channelId };
-  }
-
   const channel = await fetchChannel(client, panel.channelId);
   if (!channel || !channel.isTextBased() || !channel.guild) {
     return { ok: false, reason: `channel <#${panel.channelId}> tidak bisa diakses.` };
   }
 
-  const missing = missingPermissions(channel, client);
-  if (missing.length) {
-    return { ok: false, reason: `bot tidak punya izin di ${channel} (${missing.join(', ')}).` };
+  const missingPerms = missingPermissions(channel, client);
+  if (missingPerms.length) {
+    return { ok: false, reason: `bot tidak punya izin di ${channel} (${missingPerms.join(', ')}).` };
   }
 
-  const payload = { embeds: [embed] };
-
+  let existing = null;
   if (panel.messageId) {
-    const existing = await channel.messages.fetch(panel.messageId).catch(() => null);
-
+    existing = await channel.messages.fetch(panel.messageId).catch(() => null);
     if (existing && existing.author.id !== client.user.id) {
       return { ok: false, reason: `pesan ${panel.messageId} bukan milik bot.` };
     }
-
-    if (existing) {
-      const wait = MIN_EDIT_INTERVAL_MS - (Date.now() - lastEditAt);
-      if (wait > 0) await sleep(wait);
-      await existing.edit(payload);
-      lastEditAt = Date.now();
-      store.setLastHash(hash);
-      store.updatePanel({}, Date.now());
-      return { ok: true, messageId: existing.id, channelId: channel.id, edited: true };
-    }
-    // Pesan panel sudah dihapus -> kirim ulang & simpan id baru.
   }
+
+  let media = state.media || {};
+
+  // State bisa hilang karena redeploy, padahal gambarnya masih menempel di pesan.
+  // Nama file aset diberi tag jenis supaya bisa dikenali ulang dari lampiran.
+  if (existing && seed.imageKinds.every((kind) => !media[`${kind}File`])) {
+    const recovered = recoverMediaFromMessage(existing);
+    if (Object.keys(recovered).length) {
+      media = store.setMedia(recovered);
+      console.log(`[games] media dipulihkan dari lampiran pesan: ${Object.values(recovered).join(', ')}`);
+    }
+  }
+
+  const referenced = [...new Set(seed.imageKinds.map((kind) => media[`${kind}File`]).filter(Boolean))];
+  const known = knownAttachmentNames(panel, existing);
+  const { files, replace } = planAssets(referenced, known);
+
+  // Gambar hanya direferensikan kalau memang tersedia (menempel di pesan / di disk).
+  const usable = new Set(referenced.filter((fileName) => known.has(fileName) || assets.exists(fileName)));
+  const resolveImage = (kind) => {
+    const fileName = media[`${kind}File`];
+    if (!fileName) return media[kind] || null;
+    return usable.has(fileName) ? `attachment://${fileName}` : null;
+  };
+
+  const { embed, hash } = buildGamesEmbed(state, { resolveImage });
+
+  if (!options.force && !files.length && existing && store.getLastHash() === hash) {
+    return { ok: true, skipped: true, messageId: existing.id, channelId: channel.id };
+  }
+
+  const payload = { embeds: [embed] };
+  if (replace) {
+    payload.files = files;
+    // Lampiran lama diganti set baru supaya tidak menumpuk.
+    payload.attachments = [];
+  } else if (files.length) {
+    // Tidak bisa ganti total: tambahkan saja, gambar lama tetap aman.
+    payload.files = files;
+  }
+
+  const uploadedNames = files.map((file) => file.name);
+  const nextAttachments = replace
+    ? uploadedNames
+    : [...new Set([...(panel.attachments || []), ...uploadedNames])].filter((name) =>
+        referenced.includes(name)
+      );
+
+  if (existing) {
+    const wait = MIN_EDIT_INTERVAL_MS - (Date.now() - lastEditAt);
+    if (wait > 0) await sleep(wait);
+    await existing.edit(payload);
+    lastEditAt = Date.now();
+    store.setLastHash(hash);
+    store.updatePanel({ attachments: nextAttachments }, Date.now());
+    return { ok: true, messageId: existing.id, channelId: channel.id, edited: true };
+  }
+  // Pesan panel sudah dihapus -> kirim ulang & simpan id baru.
 
   const sent = await channel.send(payload);
   lastEditAt = Date.now();
-  store.updatePanel({ guildId: channel.guild.id, channelId: channel.id, messageId: sent.id }, Date.now());
+  store.updatePanel(
+    {
+      guildId: channel.guild.id,
+      channelId: channel.id,
+      messageId: sent.id,
+      attachments: nextAttachments,
+    },
+    Date.now()
+  );
   store.setLastHash(hash);
   await sent.pin().catch(() => {});
 
