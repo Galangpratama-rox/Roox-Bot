@@ -3,10 +3,10 @@
 const { AttachmentBuilder, PermissionFlagsBits } = require('discord.js');
 
 const config = require('../config');
-const seed = require('../data/games');
-const store = require('./gameStore');
+const panelStore = require('./panelStore');
 const assets = require('./assetStore');
 const { buildGamesEmbed } = require('../utils/buildGamesEmbed');
+const { buildTextEmbed } = require('../utils/buildTextEmbed');
 
 // Jeda minimal antar edit: cegah spam edit kalau owner menjalankan banyak command cepat.
 const MIN_EDIT_INTERVAL_MS = 2000;
@@ -15,10 +15,6 @@ const REQUIRED_PERMS = [
   PermissionFlagsBits.SendMessages,
   PermissionFlagsBits.EmbedLinks,
 ];
-
-let busy = false;
-let pendingAgain = false;
-let lastEditAt = 0;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -37,38 +33,6 @@ function missingPermissions(channel, client) {
   const perms = channel.permissionsFor(me);
   if (!perms) return REQUIRED_PERMS.slice();
   return REQUIRED_PERMS.filter((perm) => !perms.has(perm));
-}
-
-/**
- * Apakah pesan ini panel yang kita kelola? Dipakai saat adopsi pesan pinned.
- * Dicocokkan lewat footer (fallback: author), bukan asal pesan bot.
- */
-function isPanelMessage(message, client, media = store.getMedia()) {
-  if (!message || message.author?.id !== client.user?.id) return false;
-  const embed = message.embeds?.[0];
-  if (!embed) return false;
-
-  const footer = (embed.footer?.text || '').toLowerCase();
-  const prefix = (media.footerPrefix || '').toLowerCase();
-  if (prefix && footer.startsWith(prefix)) return true;
-
-  const author = (embed.author?.name || '').toLowerCase();
-  const authorName = (media.authorName || '').toLowerCase();
-  return Boolean(authorName && author === authorName);
-}
-
-/**
- * Nama lampiran yang dianggap sudah menempel di pesan panel: gabungan catatan
- * state (pasti) dan lampiran yang dilaporkan pesan (kalau tersedia).
- * @param {object} panel
- * @param {import('discord.js').Message|null} existing
- */
-function knownAttachmentNames(panel, existing) {
-  const names = new Set(Array.isArray(panel?.attachments) ? panel.attachments : []);
-  for (const attachment of existing?.attachments?.values?.() ?? []) {
-    names.add(attachment.name);
-  }
-  return names;
 }
 
 // Nama file aset diberi tag jenis, jadi jenisnya bisa dikenali dari lampiran pesan.
@@ -94,253 +58,366 @@ function recoverMediaFromMessage(existing) {
   return patch;
 }
 
+/** Teks footer yang jadi "tanda tangan" sebuah panel (untuk adopsi pesan pinned). */
+function footerSignature(media) {
+  return String(media?.footerPrefix || media?.footerText || media?.authorName || '').trim();
+}
+
+function isPanelMessageFor(key, message, client) {
+  if (!message || message.author?.id !== client.user?.id) return false;
+  const embed = message.embeds?.[0];
+  if (!embed) return false;
+
+  const media = panelStore.getMedia(key) || {};
+  const signature = footerSignature(media).toLowerCase();
+  const footer = (embed.footer?.text || '').toLowerCase();
+  if (signature && footer.startsWith(signature)) return true;
+
+  // Fallback (kalau footer dikosongkan): author + judul harus sama-sama cocok,
+  // supaya panel lain di channel yang sama tidak salah diadopsi.
+  const author = (embed.author?.name || '').toLowerCase();
+  const authorName = (media.authorName || '').toLowerCase();
+  const title = (embed.title || '').toLowerCase();
+  const expectedTitle = (media.title || '').toLowerCase();
+  return Boolean(authorName && author === authorName && expectedTitle && title === expectedTitle);
+}
+
 /**
- * Susun gambar yang perlu diunggah.
- *
- * - Mode GANTI: semua gambar yang dipakai ada di disk -> lampiran pesan diganti
- *   utuh (`attachments: []`) dengan seluruh gambar, jadi tidak ada yang hilang.
- * - Mode TAMBAH: ada gambar yang hanya menempel di pesan dan tidak ada di disk
- *   (mis. setelah redeploy) -> jangan ganti lampiran, cukup tambahkan yang baru,
- *   supaya gambar lama tidak ikut terhapus.
- * @param {string[]} referenced nama file yang dipakai media
- * @param {Set<string>} known nama yang sudah menempel di pesan
+ * Buat pengelola panel live untuk satu panel.
+ * @param {{ key: string, buildEmbed: Function, defaultChannelId?: string|null }} options
  */
-function planAssets(referenced, known) {
-  const onDisk = new Set(referenced.filter((fileName) => assets.exists(fileName)));
-  const awaitingUpload = referenced.filter(
-    (fileName) => !known.has(fileName) || !onDisk.has(fileName)
-  );
-  const replaceMode = awaitingUpload.length > 0 && referenced.every((fileName) => onDisk.has(fileName));
+function createPanelUpdater({ key, buildEmbed, defaultChannelId = null }) {
+  let busy = false;
+  let pendingAgain = false;
+  let lastEditAt = 0;
 
-  const files = [];
-  if (awaitingUpload.length) {
-    const list = replaceMode
-      ? referenced
-      : referenced.filter((fileName) => !known.has(fileName) && onDisk.has(fileName));
+  /**
+   * Nama lampiran yang dianggap sudah menempel di pesan panel: gabungan catatan
+   * state, lampiran yang dilaporkan pesan, dan file yang direferensikan embed.
+   *
+   * Penting: Discord MENGHAPUS lampiran yang dipakai embed dari
+   * `message.attachments`, jadi nama file aset juga dibaca dari URL gambar/ikon
+   * embed yang sudah ada di pesan.
+   */
+  function knownAttachmentNames(panel, existing) {
+    const names = new Set(Array.isArray(panel?.attachments) ? panel.attachments : []);
 
-    for (const fileName of list) {
-      const buffer = assets.read(fileName);
-      if (buffer) files.push(new AttachmentBuilder(buffer, { name: fileName }));
+    for (const attachment of existing?.attachments?.values?.() ?? []) {
+      names.add(attachment.name);
     }
+
+    const embed = existing?.embeds?.[0];
+    const urls = [
+      embed?.image?.url,
+      embed?.thumbnail?.url,
+      embed?.author?.iconURL,
+      embed?.footer?.iconURL,
+    ];
+
+    for (const url of urls) {
+      if (!url) continue;
+      const fileName = url.startsWith('attachment://')
+        ? url.slice('attachment://'.length)
+        : url.split('?')[0].split('/').pop();
+      if (fileName) names.add(fileName);
+    }
+
+    return names;
   }
 
-  const unavailable = referenced.filter(
-    (fileName) => !known.has(fileName) && !onDisk.has(fileName)
-  );
-  if (unavailable.length) {
-    console.warn(
-      `[games] gambar tidak tersedia di pesan maupun di ${assets.assetDir()} ` +
-        `(${unavailable.join(', ')}). Upload ulang lewat \`/games media\` / \`/games footer\`.`
+  /**
+   * Susun gambar yang perlu diunggah.
+   *
+   * - Mode GANTI: semua gambar ada di disk -> lampiran pesan diganti utuh.
+   * - Mode TAMBAH: ada gambar hanya menempel di pesan (tidak ada di disk, mis.
+   *   setelah redeploy) -> jangan ganti lampiran, cuma tambahkan yang baru.
+   */
+  function planAssets(referenced, known) {
+    const onDisk = new Set(referenced.filter((fileName) => assets.exists(fileName)));
+    const awaitingUpload = referenced.filter(
+      (fileName) => !known.has(fileName) || !onDisk.has(fileName)
     );
-  }
+    const replaceMode =
+      awaitingUpload.length > 0 && referenced.every((fileName) => onDisk.has(fileName));
 
-  return { files, replace: replaceMode && files.length > 0, unavailable };
-}
+    const files = [];
+    if (awaitingUpload.length) {
+      const list = replaceMode
+        ? referenced
+        : referenced.filter((fileName) => !known.has(fileName) && onDisk.has(fileName));
 
-async function updateOnce(client, options) {
-  const state = store.getState();
-  const panel = state.panel;
-
-  if (!panel?.channelId) {
-    return { ok: false, reason: 'panel belum diset. Jalankan `/games panel` dulu.' };
-  }
-
-  const channel = await fetchChannel(client, panel.channelId);
-  if (!channel || !channel.isTextBased() || !channel.guild) {
-    return { ok: false, reason: `channel <#${panel.channelId}> tidak bisa diakses.` };
-  }
-
-  const missingPerms = missingPermissions(channel, client);
-  if (missingPerms.length) {
-    return { ok: false, reason: `bot tidak punya izin di ${channel} (${missingPerms.join(', ')}).` };
-  }
-
-  let existing = null;
-  if (panel.messageId) {
-    existing = await channel.messages.fetch(panel.messageId).catch(() => null);
-    if (existing && existing.author.id !== client.user.id) {
-      return { ok: false, reason: `pesan ${panel.messageId} bukan milik bot.` };
+      for (const fileName of list) {
+        const buffer = assets.read(fileName);
+        if (buffer) files.push(new AttachmentBuilder(buffer, { name: fileName }));
+      }
     }
-  }
 
-  let media = state.media || {};
-
-  // State bisa hilang karena redeploy, padahal gambarnya masih menempel di pesan.
-  // Nama file aset diberi tag jenis supaya bisa dikenali ulang dari lampiran.
-  if (existing && seed.imageKinds.every((kind) => !media[`${kind}File`])) {
-    const recovered = recoverMediaFromMessage(existing);
-    if (Object.keys(recovered).length) {
-      media = store.setMedia(recovered);
-      console.log(`[games] media dipulihkan dari lampiran pesan: ${Object.values(recovered).join(', ')}`);
-    }
-  }
-
-  const referenced = [...new Set(seed.imageKinds.map((kind) => media[`${kind}File`]).filter(Boolean))];
-  const known = knownAttachmentNames(panel, existing);
-  const { files, replace } = planAssets(referenced, known);
-
-  // Gambar hanya direferensikan kalau memang tersedia (menempel di pesan / di disk).
-  const usable = new Set(referenced.filter((fileName) => known.has(fileName) || assets.exists(fileName)));
-  const resolveImage = (kind) => {
-    const fileName = media[`${kind}File`];
-    if (!fileName) return media[kind] || null;
-    return usable.has(fileName) ? `attachment://${fileName}` : null;
-  };
-
-  const { embed, hash } = buildGamesEmbed(state, { resolveImage });
-
-  if (!options.force && !files.length && existing && store.getLastHash() === hash) {
-    return { ok: true, skipped: true, messageId: existing.id, channelId: channel.id };
-  }
-
-  const payload = { embeds: [embed] };
-  if (replace) {
-    payload.files = files;
-    // Lampiran lama diganti set baru supaya tidak menumpuk.
-    payload.attachments = [];
-  } else if (files.length) {
-    // Tidak bisa ganti total: tambahkan saja, gambar lama tetap aman.
-    payload.files = files;
-  }
-
-  const uploadedNames = files.map((file) => file.name);
-  const nextAttachments = replace
-    ? uploadedNames
-    : [...new Set([...(panel.attachments || []), ...uploadedNames])].filter((name) =>
-        referenced.includes(name)
+    const unavailable = referenced.filter(
+      (fileName) => !known.has(fileName) && !onDisk.has(fileName)
+    );
+    if (unavailable.length) {
+      console.warn(
+        `[panel:${key}] gambar tidak tersedia di pesan maupun di ${assets.assetDir()} ` +
+          `(${unavailable.join(', ')}). Upload ulang lewat \`/panel media\`.`
       );
+    }
 
-  if (existing) {
-    const wait = MIN_EDIT_INTERVAL_MS - (Date.now() - lastEditAt);
-    if (wait > 0) await sleep(wait);
-    await existing.edit(payload);
+    return { files, replace: replaceMode && files.length > 0 };
+  }
+
+  async function updateOnce(client, options = {}) {
+    const data = panelStore.getPanelData(key);
+    if (!data) return { ok: false, reason: `panel "${key}" tidak ditemukan.` };
+
+    const panel = data.panel;
+    if (!panel?.channelId) {
+      return { ok: false, reason: 'panel belum diset. Kirim dulu panelnya ke channel.' };
+    }
+
+    const channel = await fetchChannel(client, panel.channelId);
+    if (!channel || !channel.isTextBased() || !channel.guild) {
+      return { ok: false, reason: `channel <#${panel.channelId}> tidak bisa diakses.` };
+    }
+
+    const perms = missingPermissions(channel, client);
+    if (perms.length) {
+      return { ok: false, reason: `bot tidak punya izin di ${channel} (${perms.join(', ')}).` };
+    }
+
+    let existing = null;
+    if (panel.messageId) {
+      existing = await channel.messages.fetch(panel.messageId).catch(() => null);
+      if (existing && existing.author.id !== client.user.id) {
+        return { ok: false, reason: `pesan ${panel.messageId} bukan milik bot.` };
+      }
+    }
+
+    let media = data.media || {};
+
+    // State bisa hilang karena redeploy, padahal gambarnya masih di pesan.
+    if (existing && panelStore.IMAGE_KINDS.every((kind) => !media[`${kind}File`])) {
+      const recovered = recoverMediaFromMessage(existing);
+      if (Object.keys(recovered).length) {
+        media = panelStore.setMedia(key, recovered);
+        console.log(
+          `[panel:${key}] media dipulihkan dari lampiran pesan: ${Object.values(recovered).join(', ')}`
+        );
+      }
+    }
+
+    const referenced = [
+      ...new Set(panelStore.IMAGE_KINDS.map((kind) => media[`${kind}File`]).filter(Boolean)),
+    ];
+    const known = knownAttachmentNames(panel, existing);
+    const { files, replace } = planAssets(referenced, known);
+
+    const usable = new Set(
+      referenced.filter((fileName) => known.has(fileName) || assets.exists(fileName))
+    );
+    const resolveImage = (kind) => {
+      const fileName = media[`${kind}File`];
+      if (!fileName) return media[kind] || null;
+      return usable.has(fileName) ? `attachment://${fileName}` : null;
+    };
+
+    const built = buildEmbed(panelStore.getPanelData(key), { resolveImage, key });
+    const { embed, hash, components } = built;
+
+    if (!options.force && !files.length && existing && panelStore.getLastHash(key) === hash) {
+      return { ok: true, skipped: true, messageId: existing.id, channelId: channel.id };
+    }
+
+    const payload = { embeds: [embed] };
+    if (Array.isArray(components)) payload.components = components;
+
+    if (replace) {
+      payload.files = files;
+      // Lampiran lama diganti set baru supaya tidak menumpuk.
+      payload.attachments = [];
+    } else if (files.length) {
+      // Tidak bisa ganti total: tambahkan saja, gambar lama tetap aman.
+      payload.files = files;
+    }
+
+    const uploadedNames = files.map((file) => file.name);
+    const nextAttachments = replace
+      ? uploadedNames
+      : [...new Set([...(panel.attachments || []), ...uploadedNames, ...known])].filter((name) =>
+          referenced.includes(name)
+        );
+
+    if (existing) {
+      const wait = MIN_EDIT_INTERVAL_MS - (Date.now() - lastEditAt);
+      if (wait > 0) await sleep(wait);
+      await existing.edit(payload);
+      lastEditAt = Date.now();
+      panelStore.setLastHash(key, hash);
+      panelStore.updatePanel(key, { attachments: nextAttachments }, Date.now());
+      return { ok: true, messageId: existing.id, channelId: channel.id, edited: true };
+    }
+
+    const sent = await channel.send(payload);
     lastEditAt = Date.now();
-    store.setLastHash(hash);
-    store.updatePanel({ attachments: nextAttachments }, Date.now());
-    return { ok: true, messageId: existing.id, channelId: channel.id, edited: true };
-  }
-  // Pesan panel sudah dihapus -> kirim ulang & simpan id baru.
+    panelStore.updatePanel(
+      key,
+      {
+        guildId: channel.guild.id,
+        channelId: channel.id,
+        messageId: sent.id,
+        attachments: nextAttachments,
+      },
+      Date.now()
+    );
+    panelStore.setLastHash(key, hash);
+    await sent.pin().catch(() => {});
 
-  const sent = await channel.send(payload);
-  lastEditAt = Date.now();
-  store.updatePanel(
-    {
-      guildId: channel.guild.id,
-      channelId: channel.id,
-      messageId: sent.id,
-      attachments: nextAttachments,
-    },
-    Date.now()
-  );
-  store.setLastHash(hash);
-  await sent.pin().catch(() => {});
-
-  return { ok: true, messageId: sent.id, channelId: channel.id, created: true };
-}
-
-/**
- * Render + edit pesan panel. Aman dipanggil berkali-kali: panggilan yang
- * datang saat proses berjalan akan digabung jadi satu update tambahan.
- * @param {import('discord.js').Client} client
- * @param {{ force?: boolean }} [options]
- */
-async function renderAndUpdate(client, options = {}) {
-  if (busy) {
-    pendingAgain = true;
-    return { ok: true, queued: true };
+    return { ok: true, messageId: sent.id, channelId: channel.id, created: true };
   }
 
-  busy = true;
-  try {
-    let result = await updateOnce(client, options);
-    while (pendingAgain) {
-      pendingAgain = false;
-      result = await updateOnce(client, { force: false });
+  /**
+   * Render + edit pesan panel. Panggilan yang datang saat proses berjalan
+   * digabung jadi satu update tambahan.
+   */
+  async function renderAndUpdate(client, options = {}) {
+    if (busy) {
+      pendingAgain = true;
+      return { ok: true, queued: true };
+    }
+
+    busy = true;
+    try {
+      let result = await updateOnce(client, options);
+      while (pendingAgain) {
+        pendingAgain = false;
+        result = await updateOnce(client, { force: false });
+      }
+      return result;
+    } catch (err) {
+      console.error(`[panel:${key}] gagal memperbarui panel:`, err);
+      return { ok: false, reason: err.message };
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function fetchPinnedMessages(channel) {
+    const manager = channel.messages;
+
+    if (typeof manager?.fetchPins === 'function') {
+      const result = await manager.fetchPins({ limit: 50 }).catch(() => null);
+      if (!result) return null;
+      return (result.items || []).map((pin) => pin.message ?? pin).filter(Boolean);
+    }
+
+    if (typeof manager?.fetchPinned === 'function') {
+      const pins = await manager.fetchPinned().catch(() => null);
+      return pins ? [...pins.values()] : null;
+    }
+
+    return null;
+  }
+
+  async function adoptPinned(client, channelId) {
+    const target = channelId || panelStore.getPanel(key)?.channelId || defaultChannelId;
+    const channel = await fetchChannel(client, target);
+    if (!channel || !channel.isTextBased() || !channel.guild) {
+      return { ok: false, reason: 'channel tidak valid / bot tidak bisa mengakses.' };
+    }
+
+    const pins = await fetchPinnedMessages(channel);
+    if (!pins) {
+      return { ok: false, reason: 'tidak bisa membaca pesan pinned (butuh izin Read Message History).' };
+    }
+
+    const match = pins.find((message) => isPanelMessageFor(key, message, client));
+    if (!match) return { ok: false, reason: 'panel tidak ditemukan di pesan pinned.' };
+
+    panelStore.updatePanel(key, { guildId: channel.guild.id, channelId: channel.id, messageId: match.id });
+    return { ok: true, messageId: match.id, channelId: channel.id };
+  }
+
+  async function bootstrap(client) {
+    const panel = panelStore.getPanel(key);
+    if (!panel) return { ok: false, reason: 'panel tidak ditemukan.' };
+
+    if (!panel.messageId) {
+      const channelId = panel.channelId || defaultChannelId;
+      if (!channelId) {
+        console.log(`[panel:${key}] belum ada posisi. Kirim panelnya lewat command panel.`);
+        return { ok: false, reason: 'belum ada posisi.' };
+      }
+      const adopted = await adoptPinned(client, channelId);
+      if (!adopted.ok) {
+        console.log(`[panel:${key}] panel belum ada (${adopted.reason})`);
+        return { ok: false, reason: adopted.reason };
+      }
+      console.log(`[panel:${key}] panel diadopsi dari pesan pinned ${adopted.messageId}.`);
+    }
+
+    const result = await renderAndUpdate(client, { force: true });
+    if (result.ok) {
+      console.log(`[panel:${key}] panel siap (pesan ${result.messageId}).`);
+    } else {
+      console.warn(`[panel:${key}] bootstrap gagal: ${result.reason}`);
     }
     return result;
-  } catch (err) {
-    console.error('[games] gagal memperbarui panel:', err);
-    return { ok: false, reason: err.message };
-  } finally {
-    busy = false;
   }
+
+  return {
+    key,
+    updateOnce,
+    renderAndUpdate,
+    adoptPinned,
+    bootstrap,
+    isPanelMessage: (message, client) => isPanelMessageFor(key, message, client),
+  };
 }
 
-/**
- * Ambil daftar pesan yang di-pin, dengan dukungan `fetchPins()` (baru) dan
- * `fetchPinned()` (lama). Mengembalikan array pesan, atau null kalau gagal.
- * @param {import('discord.js').TextBasedChannel} channel
- */
-async function fetchPinnedMessages(channel) {
-  const manager = channel.messages;
+// ---------------------------------------------------------------------------
+// Registry panel
+// ---------------------------------------------------------------------------
+const instances = new Map();
 
-  if (typeof manager?.fetchPins === 'function') {
-    const result = await manager.fetchPins({ limit: 50 }).catch(() => null);
-    if (!result) return null;
-    return (result.items || []).map((pin) => pin.message ?? pin).filter(Boolean);
-  }
+function createUpdaterFor(key) {
+  const data = panelStore.getPanelData(key);
+  const type = data?.type === 'games' ? 'games' : 'text';
 
-  if (typeof manager?.fetchPinned === 'function') {
-    const pins = await manager.fetchPinned().catch(() => null);
-    return pins ? [...pins.values()] : null;
-  }
+  const buildEmbed =
+    type === 'games'
+      ? buildGamesEmbed
+      : (panelData, options = {}) => buildTextEmbed(panelData, { ...options, key });
 
-  return null;
+  const updater = createPanelUpdater({
+    key,
+    buildEmbed,
+    defaultChannelId: config.panelChannels?.[key] ?? null,
+  });
+
+  instances.set(key, updater);
+  return updater;
 }
 
-/**
- * Cari panel yang sudah ada di pesan pinned channel, lalu simpan id-nya.
- * Dipakai saat state.json hilang (redeploy) atau saat panel perlu dipulihkan.
- * @param {import('discord.js').Client} client
- * @param {string} channelId
- */
-async function adoptPinned(client, channelId) {
-  const channel = await fetchChannel(client, channelId);
-  if (!channel || !channel.isTextBased() || !channel.guild) {
-    return { ok: false, reason: 'channel tidak valid / bot tidak bisa mengakses.' };
-  }
-
-  const pins = await fetchPinnedMessages(channel);
-  if (!pins) {
-    return { ok: false, reason: 'tidak bisa membaca pesan pinned (butuh izin Read Message History).' };
-  }
-
-  const media = store.getMedia();
-  const match = pins.find((message) => isPanelMessage(message, client, media));
-  if (!match) return { ok: false, reason: 'panel tidak ditemukan di pesan pinned.' };
-
-  store.updatePanel({ guildId: channel.guild.id, channelId: channel.id, messageId: match.id });
-  return { ok: true, messageId: match.id, channelId: channel.id };
+function getUpdater(key) {
+  return instances.get(key) ?? createUpdaterFor(key);
 }
 
-/**
- * Dipanggil sekali saat bot ready: pulihkan panel (adopsi pinned bila perlu)
- * lalu render ulang supaya isi pesan selalu sinkron dengan state.
- * @param {import('discord.js').Client} client
- */
-async function bootstrap(client) {
-  const state = store.getState();
-
-  if (!state.panel.messageId) {
-    const channelId = state.panel.channelId || config.gamesChannelId;
-    if (!channelId) {
-      console.log('[games] panel belum diset. Jalankan `/games panel` di channel tujuan.');
-      return;
+async function bootstrapAll(client) {
+  panelStore.init();
+  for (const key of panelStore.listPanels()) {
+    try {
+      await getUpdater(key).bootstrap(client);
+    } catch (err) {
+      console.error(`[panel:${key}] bootstrap error:`, err);
     }
-    const adopted = await adoptPinned(client, channelId);
-    if (!adopted.ok) {
-      console.log(`[games] panel belum ada (${adopted.reason}) Jalankan \`/games panel\`.`);
-      return;
-    }
-    console.log(`[games] panel diadopsi dari pesan pinned ${adopted.messageId}.`);
-  }
-
-  const result = await renderAndUpdate(client, { force: true });
-  if (result.ok) {
-    console.log(`[games] panel siap (pesan ${result.messageId}).`);
-  } else {
-    console.warn(`[games] bootstrap panel gagal: ${result.reason}`);
   }
 }
 
-module.exports = { renderAndUpdate, adoptPinned, bootstrap, isPanelMessage };
+module.exports = {
+  createPanelUpdater,
+  getUpdater,
+  bootstrapAll,
+  isPanelMessageFor,
+  footerSignature,
+  recoverMediaFromMessage,
+  ...getUpdater('games'),
+};

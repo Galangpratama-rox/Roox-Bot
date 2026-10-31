@@ -4,6 +4,8 @@ const { Events, MessageFlags } = require('discord.js');
 const { isOwner } = require('../utils/isOwner');
 const { handleButton, handleModalSubmit } = require('../interactions/embedFlow');
 const gamesFlow = require('../interactions/gamesFlow');
+const panelFlow = require('../interactions/panelFlow');
+const ticketFlow = require('../interactions/ticketFlow');
 
 function parseCustomId(customId) {
   const parts = customId.split(':');
@@ -14,6 +16,20 @@ function parseCustomId(customId) {
 module.exports = {
   name: Events.InteractionCreate,
   async execute(interaction) {
+    // Tombol aksi panel (mis. "Get Script") boleh diklik siapa saja, bukan cuma owner.
+    if (interaction.isButton() && interaction.customId.startsWith('pnl:')) {
+      const [, key, scope, buttonId] = interaction.customId.split(':');
+      if (scope === 'b') {
+        return panelFlow.handlePublicButton(interaction, key, buttonId);
+      }
+      return;
+    }
+
+    // Tombol sistem tiket (buat/tutup/buka/hapus) juga publik, dengan cek izin sendiri.
+    if (interaction.isButton() && (interaction.customId.startsWith('tk:') || interaction.customId.startsWith('tkc:'))) {
+      return ticketFlow.handleTicketButton(interaction);
+    }
+
     if (!isOwner(interaction.user.id)) {
       // Autocomplete tidak bisa dibalas pesan biasa: cukup kosongkan pilihan.
       if (interaction.isAutocomplete()) {
@@ -38,6 +54,9 @@ module.exports = {
         if (interaction.commandName === 'games') {
           return await gamesFlow.handleGamesAutocomplete(interaction);
         }
+        if (interaction.commandName === 'panel') {
+          return await panelFlow.handlePanelAutocomplete(interaction);
+        }
         return await interaction.respond([]).catch(() => {});
       }
 
@@ -51,6 +70,9 @@ module.exports = {
       }
 
       if (interaction.isButton()) {
+        if (interaction.customId.startsWith('panel:')) {
+          return await panelFlow.handlePanelButton(interaction);
+        }
         if (interaction.customId.startsWith('games:')) {
           return await gamesFlow.handleGamesButton(interaction);
         }
@@ -60,6 +82,9 @@ module.exports = {
       }
 
       if (interaction.isModalSubmit()) {
+        if (interaction.customId.startsWith('panel:')) {
+          return await panelFlow.handlePanelModal(interaction);
+        }
         if (interaction.customId.startsWith('games:')) {
           return await gamesFlow.handleGamesModal(interaction);
         }

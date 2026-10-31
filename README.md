@@ -9,6 +9,10 @@ yang hanya bisa dipakai oleh owner (berdasarkan User ID).
   **live preview**.
 - Slash command `/games` (owner-only): **panel live "Roox Hub · Supported Games"**
   yang dikirim sekali lalu **di-edit otomatis** setiap daftar/status game berubah.
+- Slash command `/panel` (owner-only): **panel teks live** (freemium/premium) dengan
+  bagian-bagian teks, tombol link ke website, dan tombol aksi bot (balasan ephemeral).
+- **Sistem tiket** (pengganti Ticket Tool): tombol di panel membuat channel tiket
+  privat di kategori, dengan tombol Tutup / Buka lagi / Hapus.
 - Input lewat **pop-up modal** (form): Title, Description, URL, Color, Channel,
   Image (upload/URL), Thumbnail, Author, Footer, Fields, Timestamp.
 - **Tombol link** pada embed: user klik tombol → diarahkan ke URL.
@@ -101,6 +105,100 @@ Roox Hub · Supported Games • 24/10/2026 08:08   <- footer + timestamp
   volume, cukup pastikan panel tetap di-pin agar bisa diadopsi ulang. Kalau mau
   data benar-benar permanen, mount volume lalu set `DATA_DIR=/data`.
 
+## Panel Teks `/panel`
+
+Selain papan daftar game, bot bisa mengelola **banyak panel teks** (mis. panel
+Freemium/Premium) dengan isi bebas: judul, paragraf, beberapa **bagian**
+(heading + isi multi-baris), footer, dan **tombol**.
+
+Sama seperti `/games`: dikirim sekali lalu bot yang meng-edit pesannya, bisa
+mengadopsi pesan pinned, dan mengembalikan gambar setelah redeploy.
+
+### Command
+
+| Command | Fungsi |
+|---|---|
+| `/panel buat name template` | Buat panel baru (template `kosong` atau `freemium`) |
+| `/panel panel name [channel]` | Kirim / pindah / pulihkan panel di channel |
+| `/panel isi name` | Modal: Title, Description, Color, Author Name |
+| `/panel bagian name aksi nomor` | `tambah` / `edit` / `hapus` bagian (section) |
+| `/panel tombol name` | Modal: atur daftar tombol |
+| `/panel balasan name tombol` | Modal: isi teks balasan tombol bertipe `reply` |
+| `/panel media name` | Upload thumbnail (kanan atas), banner GIF, author icon |
+| `/panel footer name` | Footer text + ikon footer |
+| `/panel refresh name` | Paksa render + edit sekarang |
+| `/panel info name` | Lihat isi panel, daftar bagian & tombol |
+| `/panel hapus name` | Hapus panel dari bot (pesan di channel tetap ada) |
+
+### Format tombol
+
+Satu baris per tombol, format: `Label | emoji | aksi`
+
+```
+🔑 Get Free Key | 🔑 | link:https://rooxhub.my.id/#key
+🎮 Get Script | 🎮 | reply
+```
+
+- `link:URL` → **tombol link** (mengarah ke URL, diklik semua orang).
+- `reply` → **tombol aksi bot**: saat diklik member, bot membalas **ephemeral**
+  (hanya yang klik) dengan teks dari `/panel balasan`. Kalau teksnya belum
+  dibungkus ` ``` `, bot otomatis membungkusnya jadi code block supaya mudah
+  di-copy (mis. loader).
+- `ticket` → **tombol buat tiket**: saat diklik member, bot membuat channel tiket
+  privat (lihat seksi "Sistem Tiket").
+- Maksimal 25 tombol, 5 per baris.
+- Saat mengedit daftar tombol, teks balasan tombol `reply` yang labelnya tidak
+  berubah akan tetap tersimpan.
+
+Tombol publik tidak terkena pembatasan owner, tapi dibatasi cooldown 3 detik per
+user agar tidak spam.
+
+### Multi-panel & migrasi
+
+- Semua panel disimpan di satu `data/state.json` dengan format `version: 2`
+  (`panels: { games, freemium, ... }`).
+- State versi lama (sebelumnya hanya `panel`/`media`/`games` di root) otomatis
+  dimigrasikan; file lamanya disalin ke `data/state.v1.bak.json`.
+- Hapus panel dengan `/panel hapus`; panel `games` adalah fitur inti dan selalu ada.
+
+## Sistem Tiket
+
+Pengganti bot Ticket Tool: tombol panel bisa **membuat channel tiket privat** di
+kategori yang kamu tentukan, lengkap dengan tombol **Tutup / Buka lagi / Hapus**.
+
+### Setup
+
+1. Pastikan bot punya izin **Manage Channels** + **Manage Roles**, dan posisi
+   role bot **di atas** role staff.
+2. Jalankan `/ticket setup category:#Premium` (sekali saja). Bot menyimpan
+   kategorinya, mengecek izin, dan melanjutkan penomoran dari channel `ticket-####`
+   yang sudah ada di kategori itu.
+3. Kirim panel dengan tombol tiket:
+   - `/panel panel name:premium channel:#premium-panel` — panel Premium
+     (info harga + tombol `🛒 Beli Premium`), atau
+   - `/ticket panel channel:#ticket` — panel sederhana "Buat Tiket".
+
+### Perilaku
+
+- Klik tombol tiket → dibuat channel `ticket-0070` (4 digit, lanjut dari nomor
+  terakhir) di kategori, **privat**: `@everyone` tidak bisa lihat, hanya pembuat
+  tiket + role/member yang punya **Manage Channels**.
+- 1 tiket **open** per user (kalau sudah ada, bot kasih link tiketnya) + cooldown
+  (default 30 detik).
+- **Tutup** → pembuat tidak bisa kirim lagi, nama jadi `closed-0070`,
+  tombol berubah jadi Buka lagi + Hapus. **Hapus** khusus staff dan pakai konfirmasi.
+- Tidak ada transcript. State tiket disimpan di `data/tickets.json`.
+- Kalau channel dihapus manual, entry-nya dibersihkan otomatis (atau lewat `/ticket list`).
+
+### Command
+
+| Command | Fungsi |
+|---|---|
+| `/ticket setup [category]` | Pilih kategori tiket + cek izin bot |
+| `/ticket panel [channel]` | Kirim panel "Buat Tiket" (pesan lama di-update, bukan dobel) |
+| `/ticket list` | Daftar tiket + bersihkan entry yang channelnya hilang |
+| `/ticket info` | Konfigurasi, jumlah tiket, status izin bot |
+
 ## Persyaratan
 
 - Node.js 18 atau lebih baru.
@@ -139,7 +237,13 @@ Roox Hub · Supported Games • 24/10/2026 08:08   <- footer + timestamp
    | `CHANNEL_SUPPORT_GAME` | Tidak | ID channel support-game (token `{support-game}`) |
    | `CHANNEL_SUPPORT_EXECUTOR` | Tidak | ID channel support-executor (token `{support-executor}`) |
    | `CHANNEL_GAMES` | Tidak | Channel default panel live `/games` (kosong = `CHANNEL_SUPPORT_GAME`) |
-   | `DATA_DIR` | Tidak | Folder state panel live. Default `data`; di Railway isi path volume |
+   | `CHANNEL_FREEMIUM` | Tidak | Channel default panel teks `freemium` (`/panel`) |
+   | `DATA_DIR` | Tidak | Folder state & gambar panel. Default `data`; di Railway isi path volume |
+   | `TICKET_CATEGORY_ID` | Tidak | Kategori tiket (cadangan; biasanya cukup `/ticket setup`) |
+   | `TICKET_CATEGORY_NAME` | Tidak | Nama kategori yang dicari otomatis. Default `Premium` |
+   | `TICKET_STAFF_ROLES` | Tidak | Role tambahan yang boleh lihat tiket (ID, pisah koma) |
+   | `TICKET_PING_ROLE_ID` | Tidak | Role yang di-ping saat tiket baru dibuat |
+   | `TICKET_COOLDOWN_MS` | Tidak | Jeda antar pembuatan tiket per user. Default `30000` |
 
    \* Wajib bila auto-reply AI dipakai; tanpa itu hanya jawaban canned yang jalan.
 
@@ -256,30 +360,39 @@ src/
 ├─ config.js             # baca & validasi env
 ├─ deploy-commands.js    # registrasi slash command
 ├─ events/
-│  ├─ ready.js               # + bootstrap panel live /games
+│  ├─ ready.js               # + bootstrap semua panel live
 │  ├─ interactionCreate.js   # routing slash/button/modal/autocomplete + owner gate
 │  └─ messageCreate.js       # auto-reply chat
 ├─ commands/
 │  ├─ embed.js           # tampilkan panel embed
-│  └─ games.js           # /games: panel live supported games
+│  ├─ games.js           # /games: panel live supported games
+│  ├─ panel.js           # /panel: panel teks live (freemium, premium, dll)
+│  └─ ticket.js          # /ticket: setup kategori + panel tiket
 ├─ interactions/
 │  ├─ embedFlow.js       # handle tombol, submit modal, kirim
-│  └─ gamesFlow.js       # modal media/footer, tombol sync, autocomplete
+│  ├─ gamesFlow.js       # modal media/footer, tombol sync, autocomplete
+│  ├─ panelFlow.js       # modal panel teks, tombol publik, autocomplete
+│  └─ ticketFlow.js      # tombol buat/tutup/buka/hapus tiket
 ├─ services/
 │  ├─ gemini.js          # wrapper REST Gemini
 │  ├─ autoreply.js       # orkestrasi auto-reply
-│  ├─ gameStore.js       # state panel live + persist ke data/state.json
+│  ├─ panelStore.js      # state multi-panel (v2) + migrasi dari v1
+│  ├─ gameStore.js       # adapter panel "games" di atas panelStore
 │  ├─ assetStore.js      # simpan/ambil gambar upload panel (data/assets)
-│  └─ panelUpdater.js    # edit pesan panel, adopsi pinned, recovery
+│  ├─ panelUpdater.js    # edit pesan panel, adopsi pinned, recovery
+│  ├─ ticketStore.js     # state tiket (data/tickets.json)
+│  └─ ticketManager.js   # buat/tutup/buka/hapus tiket + izin channel
 ├─ data/
 │  ├─ faq.js             # knowledge base (ISI SENDIRI)
-│  └─ games.js           # seed daftar game + media panel (ISI SENDIRI)
+│  ├─ games.js           # seed daftar game + media panel games (ISI SENDIRI)
+│  └─ panels.js          # seed panel teks (freemium, premium) + template (ISI SENDIRI)
 ├─ ui/
 │  └─ embedPanel.js      # rakit preview + tombol + modal
 └─ utils/
    ├─ isOwner.js
    ├─ embedState.js      # state panel sementara
-   ├─ cooldown.js        # anti-spam auto-reply
+   ├─ cooldown.js        # anti-spam auto-reply & tombol panel
    ├─ buildEmbed.js      # rakit embed dari state
-   └─ buildGamesEmbed.js # rakit embed panel /games + guard limit Discord
+   ├─ buildGamesEmbed.js # rakit embed panel /games + guard limit Discord
+   └─ buildTextEmbed.js  # rakit embed panel teks + baris tombol
 ```

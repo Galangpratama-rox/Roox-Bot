@@ -1,8 +1,9 @@
 'use strict';
 
 const { Events } = require('discord.js');
-const gameStore = require('../services/gameStore');
+const panelStore = require('../services/panelStore');
 const panelUpdater = require('../services/panelUpdater');
+const ticketStore = require('../services/ticketStore');
 
 module.exports = {
   name: Events.ClientReady,
@@ -11,11 +12,12 @@ module.exports = {
     console.log(`Bot online sebagai ${client.user.tag} (${client.user.id})`);
     console.log(`Terhubung ke ${client.guilds.cache.size} server.`);
 
-    // Pulihkan panel live /games: baca state, adopsi pesan pinned bila perlu,
-    // lalu render ulang supaya isinya sinkron setelah restart/redeploy.
-    gameStore.init();
-    panelUpdater.bootstrap(client).catch((err) => {
-      console.error('[games] gagal menyiapkan panel live:', err);
+    // Pulihkan semua panel live (/games, panel teks, dst): baca state, adopsi
+    // pesan pinned bila perlu, lalu render ulang supaya isinya sinkron.
+    panelStore.init();
+    ticketStore.init();
+    panelUpdater.bootstrapAll(client).catch((err) => {
+      console.error('[panel] gagal menyiapkan panel live:', err);
     });
   },
 };

@@ -14,6 +14,7 @@ const {
 
 const seed = require('../data/games');
 const store = require('../services/gameStore');
+const panelStore = require('../services/panelStore');
 const assets = require('../services/assetStore');
 const { renderAndUpdate } = require('../services/panelUpdater');
 
@@ -83,7 +84,7 @@ async function cacheMessageAssets(interaction, media) {
   if (!message) return;
 
   const byName = new Map([...message.attachments.values()].map((att) => [att.name, att]));
-  for (const kind of seed.imageKinds) {
+  for (const kind of panelStore.IMAGE_KINDS) {
     const fileName = media[`${kind}File`];
     if (!fileName || assets.exists(fileName)) continue;
 
@@ -99,7 +100,7 @@ async function cacheMessageAssets(interaction, media) {
 }
 
 function referencedFiles(media) {
-  return seed.imageKinds.map((kind) => media[`${kind}File`]).filter(Boolean);
+  return panelStore.IMAGE_KINDS.map((kind) => media[`${kind}File`]).filter(Boolean);
 }
 
 // ---------------------------------------------------------------------------
@@ -194,12 +195,12 @@ async function handleGamesModal(interaction) {
 
   const uploaded = Object.keys(patch).length > 0;
   if (!uploaded) {
-    return interaction.editReply({ content: 'ℹ️ Tidak ada perubahan yang dikirim.' });
+    return interaction.editReply({ content: 'Tidak ada perubahan yang dikirim.' });
   }
 
   await cacheMessageAssets(interaction, store.getMedia());
-  const media = store.setMedia(patch);
-  assets.prune(referencedFiles(media));
+  store.setMedia(patch);
+  assets.prune(panelStore.referencedAssetFiles());
 
   const result = await renderAndUpdate(interaction.client, { force: true });
   const head = scope === 'media' ? '✅ Media & judul panel disimpan.' : '✅ Footer panel disimpan.';

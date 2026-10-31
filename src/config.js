@@ -60,10 +60,27 @@ const config = {
   ownerIds,
   embedColor: (process.env.EMBED_COLOR || '#5865F2').trim(),
 
-  // Folder penyimpanan data runtime (panel live /games). Kosong = ./data
+  // Folder penyimpanan data runtime panel live. Kosong = ./data
   dataDir: (process.env.DATA_DIR || 'data').trim() || 'data',
-  // Channel default untuk panel live. CHANNEL_GAMES menang, fallback ke CHANNEL_SUPPORT_GAME.
+  // Channel default per panel live. games: CHANNEL_GAMES atau CHANNEL_SUPPORT_GAME.
   gamesChannelId: parseChannelId('CHANNEL_GAMES') || parseChannelId('CHANNEL_SUPPORT_GAME'),
+  panelChannels: {
+    games: parseChannelId('CHANNEL_GAMES') || parseChannelId('CHANNEL_SUPPORT_GAME'),
+    freemium: parseChannelId('CHANNEL_FREEMIUM'),
+  },
+
+  ticket: {
+    // Kategori tiket (diisi lewat /ticket setup, ini hanya cadangan).
+    categoryId: parseChannelId('TICKET_CATEGORY_ID'),
+    categoryName: (process.env.TICKET_CATEGORY_NAME || 'Premium').trim(),
+    // Role tambahan yang selalu boleh lihat tiket (selain role ber-Manage Channels).
+    staffRoles: parseList(process.env.TICKET_STAFF_ROLES).filter((id) => /^\d{17,20}$/.test(id)),
+    // (Opsional) role yang di-ping saat tiket baru dibuat.
+    pingRoleId: /^\d{17,20}$/.test((process.env.TICKET_PING_ROLE_ID || '').trim())
+      ? (process.env.TICKET_PING_ROLE_ID || '').trim()
+      : null,
+    cooldownMs: parseNumber(process.env.TICKET_COOLDOWN_MS, 30000),
+  },
 
   autoReply: {
     enabled: parseBool(process.env.AUTOREPLY_ENABLED, true),
