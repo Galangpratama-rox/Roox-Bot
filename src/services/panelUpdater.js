@@ -44,16 +44,21 @@ const TAG_TO_MEDIA_KEY = {
 };
 
 /**
- * Pulihkan data media dari nama lampiran pesan panel. Berguna saat state.json
- * hilang (redeploy) padahal gambarnya masih menempel di pesan.
- * @param {import('discord.js').Message|null} existing
+ * Pulihkan data media dari nama-nama file yang ditemukan di pesan panel.
+ * Berguna saat state.json hilang (redeploy) padahal gambarnya masih menempel
+ * di pesan. Bisa menerima array nama atau objek Message.
+ * @param {string[]|import('discord.js').Message} source
  */
-function recoverMediaFromMessage(existing) {
+function recoverMediaFromMessage(source) {
+  const names = Array.isArray(source)
+    ? source
+    : [...(source?.attachments?.values?.() ?? [])].map((attachment) => attachment.name);
+
   const patch = {};
-  for (const attachment of existing?.attachments?.values?.() ?? []) {
-    const match = /^(thumbnail|banner|authoricon|footericon)-/i.exec(attachment.name || '');
+  for (const name of names) {
+    const match = /^(thumbnail|banner|authoricon|footericon)-/i.exec(String(name || ''));
     if (!match) continue;
-    patch[TAG_TO_MEDIA_KEY[match[1].toLowerCase()]] = attachment.name;
+    patch[TAG_TO_MEDIA_KEY[match[1].toLowerCase()]] = name;
   }
   return patch;
 }
@@ -193,14 +198,18 @@ function createPanelUpdater({ key, buildEmbed, defaultChannelId = null }) {
     }
 
     let media = data.media || {};
+    const known = knownAttachmentNames(panel, existing);
 
-    // State bisa hilang karena redeploy, padahal gambarnya masih di pesan.
+    // State bisa hilang karena redeploy, padahal gambarnya masih menempel di
+    // pesan. Nama file aset diberi tag jenis supaya bisa dikenali ulang —
+    // termasuk dari URL gambar di embed (Discord menyembunyikannya dari
+    // `message.attachments` kalau dipakai embed).
     if (existing && panelStore.IMAGE_KINDS.every((kind) => !media[`${kind}File`])) {
-      const recovered = recoverMediaFromMessage(existing);
+      const recovered = recoverMediaFromMessage([...known]);
       if (Object.keys(recovered).length) {
         media = panelStore.setMedia(key, recovered);
         console.log(
-          `[panel:${key}] media dipulihkan dari lampiran pesan: ${Object.values(recovered).join(', ')}`
+          `[panel:${key}] media dipulihkan dari pesan panel: ${Object.values(recovered).join(', ')}`
         );
       }
     }
@@ -208,7 +217,6 @@ function createPanelUpdater({ key, buildEmbed, defaultChannelId = null }) {
     const referenced = [
       ...new Set(panelStore.IMAGE_KINDS.map((kind) => media[`${kind}File`]).filter(Boolean)),
     ];
-    const known = knownAttachmentNames(panel, existing);
     const { files, replace } = planAssets(referenced, known);
 
     const usable = new Set(

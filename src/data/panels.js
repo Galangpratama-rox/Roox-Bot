@@ -99,7 +99,7 @@ const premiumContent = {
     {
       id: 'belipremium',
       type: 'ticket',
-      label: 'Beli Premium',
+      label: 'Buy Premium',
       emoji: '🛒',
     },
   ],
