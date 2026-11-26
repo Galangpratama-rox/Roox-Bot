@@ -1,8 +1,8 @@
 'use strict';
 
 const { MessageFlags, PermissionFlagsBits } = require('discord.js');
-const { getState, deleteState } = require('../utils/newgameState');
-const { buildNewGamePayload } = require('../utils/buildNewGameEmbed');
+const store = require('../utils/newgameState');
+const { buildNewGamePayload, stateFromEmbed } = require('../utils/buildNewGameEmbed');
 const { buildPanel, buildModal } = require('../ui/newgamePanel');
 
 const ALLOWED_UPLOAD = /\.(png|jpe?g|gif|webp|apng)$/i;
@@ -20,7 +20,22 @@ function clean(value) {
   return trimmed.length ? trimmed : null;
 }
 
-function currentChannel(interaction, state) {
+/**
+ * Ambil sesi. Kalau hilang dari memori & disk (mis. habis restart/redeploy),
+ * bangun ulang dari embed pesan panel supaya tombol tetap jalan.
+ */
+function resolveState(interaction, pid) {
+  const cached = store.getState(pid);
+  if (cached) return cached;
+
+  const embed = interaction.message?.embeds?.[0];
+  const restored = stateFromEmbed(embed, { pid, ownerId: interaction.user.id });
+  if (restored) return store.adopt(restored);
+
+  return null;
+}
+
+async function currentChannel(interaction, state) {
   if (!state.targetChannelId) return interaction.channel;
   return (
     interaction.client.channels.cache.get(state.targetChannelId) ??
@@ -60,7 +75,7 @@ async function sendNewGame(interaction, state) {
     return interaction.editReply(buildPanel(state, `Gagal mengirim: ${err.message}`));
   }
 
-  deleteState(state.pid);
+  store.deleteState(state.pid);
   return interaction.editReply({
     content: `✅ Pengumuman **${state.gameName}** terkirim ke ${channel}. Panel ditutup.`,
     embeds: [],
@@ -76,16 +91,16 @@ async function handleButton(interaction) {
   const pid = parts[1];
   const action = parts.slice(2).join(':');
 
-  const state = getState(pid);
+  const state = resolveState(interaction, pid);
   if (!state) {
-    return deny(interaction, 'Sesi /newgame ini sudah kedaluwarsa. Jalankan `/newgame` lagi.');
+    return deny(interaction, 'Sesi /newgame ini sudah kadaluwarsa. Jalankan `/newgame` lagi.');
   }
   if (state.ownerId !== interaction.user.id) {
     return deny(interaction, 'Panel ini bukan milikmu.');
   }
 
   if (action === 'cancel') {
-    deleteState(pid);
+    store.deleteState(pid);
     return interaction.update({ content: 'Panel ditutup.', embeds: [], components: [], files: [] });
   }
 
@@ -98,6 +113,7 @@ async function handleButton(interaction) {
     state.keyChannelId = null;
     state.loaderChannelId = null;
     // Script & warna dibiarkan (biasanya tetap sama tiap announce).
+    store.save(state);
     return interaction.update(buildPanel(state, 'Panel direset.'));
   }
 
@@ -124,9 +140,9 @@ async function handleModalSubmit(interaction) {
   const kind = parts[3];
   const fields = interaction.fields;
 
-  const state = getState(pid);
+  const state = resolveState(interaction, pid);
   if (!state) {
-    return deny(interaction, 'Sesi /newgame ini sudah kedaluwarsa. Jalankan `/newgame` lagi.');
+    return deny(interaction, 'Sesi /newgame ini sudah kadaluwarsa. Jalankan `/newgame` lagi.');
   }
   if (state.ownerId !== interaction.user.id) {
     return deny(interaction, 'Panel ini bukan milikmu.');
@@ -171,6 +187,7 @@ async function handleModalSubmit(interaction) {
     return deny(interaction, 'Jenis modal tidak dikenal.');
   }
 
+  store.save(state);
   return interaction.update(buildPanel(state, 'Tersimpan.'));
 }
 

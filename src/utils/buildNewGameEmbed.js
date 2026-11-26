@@ -1,9 +1,8 @@
 'use strict';
 
-const { AttachmentBuilder, EmbedBuilder } = require('discord.js');
+const { EmbedBuilder } = require('discord.js');
 const seed = require('../data/newgame');
 const config = require('../config');
-const { safeAttachmentName } = require('./buildEmbed');
 
 // Batas Discord: value field max 1024, title max 256.
 const FIELD_VALUE_LIMIT = 1024;
@@ -63,13 +62,17 @@ function descriptionOf(state) {
   return seed.descriptionTemplate.replace(/\{name\}/g, state.gameName);
 }
 
+function thumbnailOf(state) {
+  if (state.thumbnailFile?.url) return state.thumbnailFile.url;
+  if (state.thumbnailUrl) return state.thumbnailUrl;
+  return null;
+}
+
 /**
  * Rakit embed pengumuman dari state.
  * @param {object} state
- * @param {{ includeUploaded?: boolean }} [options] includeUploaded true = thumbnail
- *   hasil upload dipakai lewat `attachment://` (harus disertai file-nya saat kirim).
  */
-function buildNewGameEmbed(state, options = {}) {
+function buildNewGameEmbed(state) {
   const embed = new EmbedBuilder();
   embed.setColor(parseColor(state.color ?? seed.color));
 
@@ -94,28 +97,95 @@ function buildNewGameEmbed(state, options = {}) {
     inline: false,
   });
 
-  if (options.includeUploaded && state.thumbnailFile) {
-    embed.setThumbnail(`attachment://${safeAttachmentName(state.thumbnailFile.name)}`);
-  } else if (state.thumbnailUrl) {
-    embed.setThumbnail(state.thumbnailUrl);
-  }
+  const thumbnail = thumbnailOf(state);
+  if (thumbnail) embed.setThumbnail(thumbnail);
 
   embed.setTimestamp();
   return embed;
 }
 
-/** File thumbnail yang diunggah lewat modal (dikirim ulang saat kirim). */
-function buildNewGameFiles(state) {
-  if (!state.thumbnailFile) return [];
-  const name = safeAttachmentName(state.thumbnailFile.name);
-  return [new AttachmentBuilder(state.thumbnailFile.url, { name })];
+/** Payload kirim: embed saja (thumbnail pakai URL, tidak ada attachment). */
+function buildNewGamePayload(state) {
+  return { embeds: [buildNewGameEmbed(state)], files: [] };
 }
 
-function buildNewGamePayload(state) {
+// ---------------------------------------------------------------------------
+// Kebalikannya: bangun ulang state dari embed preview.
+// Dipakai kalau sesi hilang dari memori & disk (mis. setelah redeploy):
+// selama pesan panel masih ada, sesi bisa dilanjutkan.
+// ---------------------------------------------------------------------------
+function stripFence(value) {
+  const match = String(value || '').match(/```[a-zA-Z0-9]*\n?([\s\S]*?)```/);
+  return match ? match[1].replace(/\n$/, '') : null;
+}
+
+function parseFeatures(value) {
+  const inner = stripFence(value);
+  if (inner == null) return [];
+  return inner
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^[+-]\s?/, '').trim())
+    .filter(Boolean);
+}
+
+function parseScript(value) {
+  const text = String(value || '');
+  const inner = stripFence(text);
+  const script = inner == null ? '' : inner.trim();
+
+  let keyChannelId = null;
+  let loaderChannelId = null;
+  for (const line of text.split(/\r?\n/)) {
+    const match = line.match(/<#(\d+)>/);
+    if (!match) continue;
+    if (/key/i.test(line)) keyChannelId = match[1];
+    else if (/loader/i.test(line)) loaderChannelId = match[1];
+  }
+
+  return { script, keyChannelId, loaderChannelId };
+}
+
+/**
+ * @param {object} embed instance/APIEmbed dari `interaction.message.embeds[0]`
+ * @param {{ pid: string, ownerId: string }} meta
+ * @returns {object|null} state yang siap dipakai, atau null kalau bukan embed /newgame
+ */
+function stateFromEmbed(embed, { pid, ownerId }) {
+  if (!embed || typeof embed !== 'object') return null;
+
+  const title = String(embed.title || '');
+  const prefix = `${seed.titlePrefix}: `;
+  const gameName = title.startsWith(prefix) ? title.slice(prefix.length) : title;
+
+  const fields = Array.isArray(embed.fields) ? embed.fields : [];
+  const featuresField = fields.find((field) => field.name === seed.featuresHeading);
+  const scriptField = fields.find((field) => field.name === seed.scriptHeading);
+  const { script, keyChannelId, loaderChannelId } = parseScript(scriptField?.value);
+
+  const color = Number.isInteger(embed.color)
+    ? `#${embed.color.toString(16).padStart(6, '0')}`
+    : null;
+
   return {
-    embeds: [buildNewGameEmbed(state, { includeUploaded: true })],
-    files: buildNewGameFiles(state),
+    pid,
+    ownerId,
+    createdAt: Date.now(),
+    gameName,
+    description: embed.description || null,
+    color,
+    thumbnailUrl: embed.thumbnail?.url || null,
+    thumbnailFile: null,
+    features: parseFeatures(featuresField?.value),
+    script,
+    keyChannelId,
+    loaderChannelId,
+    targetChannelId: null,
   };
 }
 
-module.exports = { buildNewGameEmbed, buildNewGameFiles, buildNewGamePayload, parseColor };
+module.exports = {
+  buildNewGameEmbed,
+  buildNewGamePayload,
+  parseColor,
+  stateFromEmbed,
+};

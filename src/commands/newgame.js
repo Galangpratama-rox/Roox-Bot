@@ -2,7 +2,7 @@
 
 const { InteractionContextType, MessageFlags, SlashCommandBuilder } = require('discord.js');
 const seed = require('../data/newgame');
-const { createState } = require('../utils/newgameState');
+const store = require('../utils/newgameState');
 const { buildPanel } = require('../ui/newgamePanel');
 
 module.exports = {
@@ -12,11 +12,14 @@ module.exports = {
     .setContexts(InteractionContextType.Guild),
 
   async execute(interaction) {
-    const state = createState(interaction.user.id, {
+    const state = store.createState(interaction.user.id, {
       color: seed.color,
       script: seed.defaultScript,
     });
-    if (interaction.channelId) state.targetChannelId = interaction.channelId;
+    if (interaction.channelId) {
+      state.targetChannelId = interaction.channelId;
+      store.save(state);
+    }
 
     await interaction.reply({
       ...buildPanel(state, 'Panel siap.'),

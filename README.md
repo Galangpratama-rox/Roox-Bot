@@ -203,6 +203,9 @@ Tampilan embed (garis `<--` hanya penanda, tidak ikut terkirim):
   isi **Thumbnail URL** kalau mau pakai link.
 - Baris "Get your key in ..." / "Get the official loader in ..." otomatis
   **dilewati** kalau channel-nya belum dipilih.
+- Sesi disimpan di `data/newgame/`, jadi tombol/modal tetap jalan setelah bot
+  **restart**. Kalau sesi sampai hilang (mis. redeploy tanpa volume), panel
+  otomatis **dibangun ulang dari embed pesan** selama pesannya masih ada.
 - Butuh izin bot: **View Channel, Send Messages, Embed Links** di channel tujuan.
 
 ## Sistem Tiket
