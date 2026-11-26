@@ -11,6 +11,9 @@ yang hanya bisa dipakai oleh owner (berdasarkan User ID).
   yang dikirim sekali lalu **di-edit otomatis** setiap daftar/status game berubah.
 - Slash command `/panel` (owner-only): **panel teks live** (freemium/premium) dengan
   bagian-bagian teks, tombol link ke website, dan tombol aksi bot (balasan ephemeral).
+- Slash command `/newgame` (owner-only): menyusun & mengirim **pengumuman "New Game"**
+  (embed judul + thumbnail + daftar fitur + blok script) dengan **live preview**,
+  lalu dikirim sekali ke channel tujuan.
 - **Sistem tiket** (pengganti Ticket Tool): tombol di panel membuat channel tiket
   privat di kategori, dengan tombol Tutup / Buka lagi / Hapus.
 - Input lewat **pop-up modal** (form): Title, Description, URL, Color, Channel,
@@ -160,6 +163,47 @@ user agar tidak spam.
 - State versi lama (sebelumnya hanya `panel`/`media`/`games` di root) otomatis
   dimigrasikan; file lamanya disalin ke `data/state.v1.bak.json`.
 - Hapus panel dengan `/panel hapus`; panel `games` adalah fitur inti dan selalu ada.
+
+## Pengumuman `/newgame`
+
+Command owner-only untuk membuat **satu embed pengumuman game baru**, mirip papan
+"New Game: ..." pada hub script. Dikirim **sekali** (bukan panel live) ke channel
+tujuan, dengan **live preview** supaya bisa dicek sebelum kirim.
+
+Tampilan embed (garis `<--` hanya penanda, tidak ikut terkirim):
+
+    Roox Hub                                                <-- author
+    New Game: Ant Evolution                                 <-- title
+    Ant Evolution is now officially supported by Roox Hub.  <-- description
+
+    Available Features                                      <-- field (code block "diff", baris "+" hijau)
+    + Auto Collect Orbs
+    + Auto Kill Ants
+
+    Script                                                  <-- field (code block "lua")
+    loadstring(game:HttpGet("..."))()
+    Get your key in #get-key.
+    Get the official loader in #get-script.
+
+    (gambar game di kanan atas = thumbnail)
+
+### Cara Pakai
+
+1. Jalankan `/newgame` → muncul panel ephemeral dengan preview + tombol:
+   - **Isi Game**: Game Name, Description, Thumbnail (upload/URL), Color
+   - **Fitur**: daftar fitur, satu baris = satu fitur (otomatis jadi `+ Fitur`)
+   - **Script & Channel**: kode loader, channel **Key**, channel **Loader**, channel **Target**
+   - **Kirim** / **Reset** / **Batal**
+2. Preview langsung ter-update setiap form disimpan.
+3. Klik **Kirim** → embed dikirim ke channel target (atau channel tempat command dipakai).
+
+- Teks bawaan (nama hub, template deskripsi, loader, kalimat channel key/loader,
+  warna, judul bagian) diatur di `src/data/newgame.js`.
+- Thumbnail hasil **upload** dipakai lewat attachment (tidak ditulis ke disk);
+  isi **Thumbnail URL** kalau mau pakai link.
+- Baris "Get your key in ..." / "Get the official loader in ..." otomatis
+  **dilewati** kalau channel-nya belum dipilih.
+- Butuh izin bot: **View Channel, Send Messages, Embed Links** di channel tujuan.
 
 ## Sistem Tiket
 
@@ -366,11 +410,13 @@ src/
 ├─ commands/
 │  ├─ embed.js           # tampilkan panel embed
 │  ├─ games.js           # /games: panel live supported games
+│  ├─ newgame.js         # /newgame: pengumuman "New Game"
 │  ├─ panel.js           # /panel: panel teks live (freemium, premium, dll)
 │  └─ ticket.js          # /ticket: setup kategori + panel tiket
 ├─ interactions/
 │  ├─ embedFlow.js       # handle tombol, submit modal, kirim
 │  ├─ gamesFlow.js       # modal media/footer, tombol sync, autocomplete
+│  ├─ newgameFlow.js     # modal + tombol + kirim pengumuman /newgame
 │  ├─ panelFlow.js       # modal panel teks, tombol publik, autocomplete
 │  └─ ticketFlow.js      # tombol buat/tutup/buka/hapus tiket
 ├─ services/
@@ -385,14 +431,18 @@ src/
 ├─ data/
 │  ├─ faq.js             # knowledge base (ISI SENDIRI)
 │  ├─ games.js           # seed daftar game + media panel games (ISI SENDIRI)
+│  ├─ newgame.js         # seed teks pengumuman /newgame (ISI SENDIRI)
 │  └─ panels.js          # seed panel teks (freemium, premium) + template (ISI SENDIRI)
 ├─ ui/
-│  └─ embedPanel.js      # rakit preview + tombol + modal
+│  ├─ embedPanel.js      # rakit preview + tombol + modal
+│  └─ newgamePanel.js    # rakit preview + tombol + modal /newgame
 └─ utils/
    ├─ isOwner.js
    ├─ embedState.js      # state panel sementara
+   ├─ newgameState.js    # state sesi /newgame (sementara)
    ├─ cooldown.js        # anti-spam auto-reply & tombol panel
    ├─ buildEmbed.js      # rakit embed dari state
    ├─ buildGamesEmbed.js # rakit embed panel /games + guard limit Discord
+   ├─ buildNewGameEmbed.js # rakit embed pengumuman /newgame
    └─ buildTextEmbed.js  # rakit embed panel teks + baris tombol
 ```

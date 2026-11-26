@@ -5,6 +5,7 @@ const { isOwner } = require('../utils/isOwner');
 const { handleButton, handleModalSubmit } = require('../interactions/embedFlow');
 const gamesFlow = require('../interactions/gamesFlow');
 const panelFlow = require('../interactions/panelFlow');
+const newgameFlow = require('../interactions/newgameFlow');
 const ticketFlow = require('../interactions/ticketFlow');
 
 function parseCustomId(customId) {
@@ -76,6 +77,9 @@ module.exports = {
         if (interaction.customId.startsWith('games:')) {
           return await gamesFlow.handleGamesButton(interaction);
         }
+        if (interaction.customId.startsWith('newgame:')) {
+          return await newgameFlow.handleButton(interaction);
+        }
         const parsed = parseCustomId(interaction.customId);
         if (!parsed) return;
         return await handleButton(interaction, parsed.pid, parsed.rest.join(':'));
@@ -87,6 +91,9 @@ module.exports = {
         }
         if (interaction.customId.startsWith('games:')) {
           return await gamesFlow.handleGamesModal(interaction);
+        }
+        if (interaction.customId.startsWith('newgame:')) {
+          return await newgameFlow.handleModalSubmit(interaction);
         }
         const parts = interaction.customId.split(':');
         if (parts[0] !== 'embed' || parts[2] !== 'submit') return;
