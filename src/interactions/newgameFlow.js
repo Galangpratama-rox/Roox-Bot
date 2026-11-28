@@ -3,6 +3,7 @@
 const { MessageFlags, PermissionFlagsBits } = require('discord.js');
 const store = require('../utils/newgameState');
 const { buildNewGamePayload, stateFromEmbed } = require('../utils/buildNewGameEmbed');
+const { isDeadInteraction, warnDeadInteraction } = require('../utils/interactionGuard');
 const { buildPanel, buildModal } = require('../ui/newgamePanel');
 
 const ALLOWED_UPLOAD = /\.(png|jpe?g|gif|webp|apng)$/i;
@@ -18,6 +19,22 @@ function deny(interaction, message) {
 function clean(value) {
   const trimmed = String(value ?? '').trim();
   return trimmed.length ? trimmed : null;
+}
+
+/**
+ * Perbarui pesan panel dengan aman. Interaksi yang sudah mati (mis. sudah
+ * dibalas proses lain / lebih dari 3 detik) tidak dilempar sebagai error.
+ */
+async function respond(interaction, payload) {
+  try {
+    return await (interaction.deferred || interaction.replied
+      ? interaction.editReply(payload)
+      : interaction.update(payload));
+  } catch (err) {
+    if (isDeadInteraction(err)) return warnDeadInteraction();
+    console.warn(`[newgame] gagal memperbarui panel: ${err.message}`);
+    return undefined;
+  }
 }
 
 /**
@@ -44,15 +61,20 @@ async function currentChannel(interaction, state) {
 }
 
 async function sendNewGame(interaction, state) {
-  await interaction.deferUpdate();
+  try {
+    await interaction.deferUpdate();
+  } catch (err) {
+    if (isDeadInteraction(err)) return warnDeadInteraction();
+    throw err;
+  }
 
   if (!String(state.gameName || '').trim()) {
-    return interaction.editReply(buildPanel(state, 'Isi dulu nama game lewat tombol **Isi Game**.'));
+    return respond(interaction, buildPanel(state, 'Isi dulu nama game lewat tombol **Isi Game**.'));
   }
 
   const channel = await currentChannel(interaction, state);
   if (!channel || !channel.isTextBased()) {
-    return interaction.editReply(buildPanel(state, 'Channel tujuan tidak valid.'));
+    return respond(interaction, buildPanel(state, 'Channel tujuan tidak valid.'));
   }
 
   const me = interaction.guild.members.me ?? (await interaction.guild.members.fetchMe().catch(() => null));
@@ -63,7 +85,8 @@ async function sendNewGame(interaction, state) {
     perms?.has(PermissionFlagsBits.EmbedLinks);
 
   if (!allowed) {
-    return interaction.editReply(
+    return respond(
+      interaction,
       buildPanel(state, `Bot belum punya izin **View Channel / Send Messages / Embed Links** di ${channel}.`)
     );
   }
@@ -72,11 +95,11 @@ async function sendNewGame(interaction, state) {
   try {
     await channel.send({ embeds: payload.embeds, files: payload.files });
   } catch (err) {
-    return interaction.editReply(buildPanel(state, `Gagal mengirim: ${err.message}`));
+    return respond(interaction, buildPanel(state, `Gagal mengirim: ${err.message}`));
   }
 
   store.deleteState(state.pid);
-  return interaction.editReply({
+  return respond(interaction, {
     content: `✅ Pengumuman **${state.gameName}** terkirim ke ${channel}. Panel ditutup.`,
     embeds: [],
     components: [],
@@ -101,7 +124,7 @@ async function handleButton(interaction) {
 
   if (action === 'cancel') {
     store.deleteState(pid);
-    return interaction.update({ content: 'Panel ditutup.', embeds: [], components: [], files: [] });
+    return respond(interaction, { content: 'Panel ditutup.', embeds: [], components: [] });
   }
 
   if (action === 'reset') {
@@ -114,7 +137,7 @@ async function handleButton(interaction) {
     state.loaderChannelId = null;
     // Script & warna dibiarkan (biasanya tetap sama tiap announce).
     store.save(state);
-    return interaction.update(buildPanel(state, 'Panel direset.'));
+    return respond(interaction, buildPanel(state, 'Panel direset.'));
   }
 
   if (action === 'send') {
@@ -125,7 +148,10 @@ async function handleButton(interaction) {
     const kind = action.slice('modal:'.length);
     const modal = buildModal(state, kind);
     if (!modal) return deny(interaction, 'Modal tidak dikenal.');
-    return interaction.showModal(modal);
+    return interaction.showModal(modal).catch((err) => {
+      if (isDeadInteraction(err)) return warnDeadInteraction();
+      throw err;
+    });
   }
 
   return deny(interaction, 'Aksi tidak dikenal.');
@@ -151,7 +177,7 @@ async function handleModalSubmit(interaction) {
   if (kind === 'info') {
     const color = clean(fields.getTextInputValue('color'));
     if (color && !/^#[0-9a-fA-F]{6}$/.test(color)) {
-      return interaction.update(buildPanel(state, 'Warna harus format hex, contoh #5865F2.'));
+      return respond(interaction, buildPanel(state, 'Warna harus format hex, contoh #5865F2.'));
     }
 
     state.gameName = clean(fields.getTextInputValue('game_name')) ?? '';
@@ -163,7 +189,8 @@ async function handleModalSubmit(interaction) {
     if (uploaded?.size) {
       const attachment = [...uploaded.values()][0];
       if (!ALLOWED_UPLOAD.test(attachment.name)) {
-        return interaction.update(
+        return respond(
+          interaction,
           buildPanel(state, `File "${attachment.name}" tidak didukung. Pakai PNG, JPG, WEBP, atau GIF.`)
         );
       }
@@ -188,7 +215,7 @@ async function handleModalSubmit(interaction) {
   }
 
   store.save(state);
-  return interaction.update(buildPanel(state, 'Tersimpan.'));
+  return respond(interaction, buildPanel(state, 'Tersimpan.'));
 }
 
 module.exports = { handleButton, handleModalSubmit };

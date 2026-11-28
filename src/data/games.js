@@ -70,5 +70,9 @@ module.exports = {
     { name: 'Fish For Sea Animals', status: 'working' },
     { name: 'Drag Drive Simulator (Beta)', status: 'working' },
     { name: 'Cast For Fish', status: 'working' },
+    { name: 'Unlock For Pet', status: 'working' },
+    { name: 'Steal With Spider Arm', status: 'working' },
+    { name: 'Wake Up An Animal', status: 'working' },
+    { name: 'Fish For Secret Animal', status: 'working' },
   ],
 };

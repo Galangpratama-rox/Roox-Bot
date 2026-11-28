@@ -2,6 +2,11 @@
 
 const { Events, MessageFlags } = require('discord.js');
 const { isOwner } = require('../utils/isOwner');
+const {
+  isDuplicate,
+  isDeadInteraction,
+  warnDeadInteraction,
+} = require('../utils/interactionGuard');
 const { handleButton, handleModalSubmit } = require('../interactions/embedFlow');
 const gamesFlow = require('../interactions/gamesFlow');
 const panelFlow = require('../interactions/panelFlow');
@@ -17,6 +22,9 @@ function parseCustomId(customId) {
 module.exports = {
   name: Events.InteractionCreate,
   async execute(interaction) {
+    // Interaksi yang sama tidak boleh diproses dua kali (tiket dobel, dll).
+    if (isDuplicate(interaction)) return;
+
     // Tombol aksi panel (mis. "Get Script") boleh diklik siapa saja, bukan cuma owner.
     if (interaction.isButton() && interaction.customId.startsWith('pnl:')) {
       const [, key, scope, buttonId] = interaction.customId.split(':');
@@ -100,6 +108,12 @@ module.exports = {
         return await handleModalSubmit(interaction, parts[1], parts.slice(3).join(':'));
       }
     } catch (err) {
+      // Interaksi sudah tidak valid (dipakai proses lain / lebih dari 3 detik):
+      // tidak ada gunanya mencoba membalas member, cukup peringatan ringkas.
+      if (isDeadInteraction(err)) {
+        return warnDeadInteraction();
+      }
+
       console.error('Error menangani interaksi:', err);
       if (interaction.isAutocomplete()) return;
       const content = `Terjadi error: ${err.message}`;

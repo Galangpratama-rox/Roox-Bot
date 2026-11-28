@@ -389,6 +389,18 @@ yang didukung, dan executor — masing-masing diarahkan ke channel yang sesuai.
 - Pesan pemicu dikirim ke Google (Gemini) untuk dinilai/dijawab.
 - `gemini.js` punya retry ringan + timeout; bot tidak akan crash kalau Gemini error.
 
+## Catatan Operasional
+
+- Setiap boot bot mencetak `[bot] instance pid=... boot=...`. Kalau di log ada
+  **dua pid berbeda** yang saling berselang-seling → token dipakai **dua proses**
+  (mis. bot lokal masih jalan + Railway). Matikan salah satu, karena gejalanya:
+  respon dobel, tiket terbuat dua kali, dan error `Unknown interaction (10062)`.
+- Error `10062` bukan bug alur: interaksi hanya bisa dibalas sekali & hanya dalam
+  3 detik pertama. Bot sudah menandainya dengan peringatan ringkas (maks sekali
+  per 10 menit), bukan stack trace panjang.
+- Interaksi yang sama tidak pernah diproses dua kali dalam satu proses
+  (idempotensi berdasarkan `interaction.id`, TTL 30 detik).
+
 ## Deploy ke Railway
 
 1. Push folder ini ke repository GitHub.

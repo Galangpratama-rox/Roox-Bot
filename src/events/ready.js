@@ -9,6 +9,11 @@ module.exports = {
   name: Events.ClientReady,
   once: true,
   execute(client) {
+    // Sidik jari proses: kalau di log muncul DUA pid berbeda yang saling
+    // berselang-seling, berarti bot dijalankan dua kali (token dipakai bareng).
+    console.log(
+      `[bot] instance pid=${process.pid} boot=${new Date().toISOString()}`
+    );
     console.log(`Bot online sebagai ${client.user.tag} (${client.user.id})`);
     console.log(`Terhubung ke ${client.guilds.cache.size} server.`);
 
